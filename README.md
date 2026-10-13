@@ -1,7 +1,6 @@
-# DocClassifier — gestore documentale personale (ispirato a DEVONthink, in Python)
+# DocClassifier — gestore documentale personale in Python
 
-`DocClassifier` (pacchetto Python: `devon`) replica le funzioni essenziali
-di DEVONthink: indicizza le tue cartelle di documenti in un database
+`DocClassifier` (pacchetto Python: `devon`) indicizza le tue cartelle di documenti in un database
 SQLite con ricerca full-text, tag, gruppi (anche "smart"), **categorie
 semantiche con ancoraggi positivi/negativi**, suggerimenti "vedi anche",
 rilevamento dei duplicati ed export verso un disco esterno.
@@ -10,7 +9,7 @@ rilevamento dei duplicati ed export verso un disco esterno.
 e al massimo *copia* (con `export`).
 
 Funziona con la sola libreria standard di Python 3.10+ (testato fino a
-3.12), quindi gira senza installare nulla anche su un Mac del 2013.
+3.12), quindi gira senza installare nulla.
 
 ## Eseguibili pronti (senza installare Python)
 
@@ -51,7 +50,7 @@ python3 -c "import sqlite3; sqlite3.connect(':memory:').execute(
   \"CREATE VIRTUAL TABLE t USING fts5(x)\"); print('FTS5 ok')"
 ```
 
-## Uso tipico (estrazione documenti prima della riconsegna del Mac)
+## Uso tipico
 
 ```bash
 # 1. indicizza le cartelle con i tuoi documenti
@@ -114,7 +113,7 @@ Comandi: `semsearch QUERY` · `embed` · `cluster [-k N]` · `topics` ·
 ## Interfaccia grafica web
 
 `python3 -m devon serve` apre nel browser un'interfaccia a tre pannelli
-stile DEVONthink, senza alcuna dipendenza (HTML+CSS+JS inclusi
+a tre pannelli, senza alcuna dipendenza (HTML+CSS+JS inclusi
 nell'applicazione):
 
 - **Barra laterale**: tutti i documenti, filtro per tipo, gruppi
