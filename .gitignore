@@ -1,0 +1,9 @@
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+.app*.js
+avvia-devon-web.bat
+importa-C-D.bat
+.DS_Store

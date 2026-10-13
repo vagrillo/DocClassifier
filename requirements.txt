@@ -1,0 +1,9 @@
+# devon funziona con la sola libreria standard di Python 3.10+.
+# Questi pacchetti sono OPZIONALI e sbloccano formati extra:
+
+pypdf          # testo dei PDF (invece del solo OCR / soli metadati)
+pytesseract    # OCR di immagini e PDF scannerizzati (richiede anche
+               # Tesseract sul sistema:  brew install tesseract tesseract-lang
+               # e aggiungere "ita" tra le lingue)
+
+# pip3 install --user -r requirements.txt
