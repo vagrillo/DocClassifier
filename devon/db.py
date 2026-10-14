@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS doc_groups (
     PRIMARY KEY (doc_id, group_id)
 );
 
+CREATE TABLE IF NOT EXISTS keywords (
+    name    TEXT PRIMARY KEY COLLATE NOCASE,
+    terms   TEXT NOT NULL DEFAULT '',
+    created TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS concepts (
     id        INTEGER PRIMARY KEY,
     name      TEXT UNIQUE NOT NULL COLLATE NOCASE,

@@ -261,6 +261,8 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(url.query)
         try:
             if not parts:
+                self._html(GAPP_SHELL)
+            elif parts == ["classic"]:
                 self._html(APP_SHELL)
             elif parts == ["favicon.ico"]:
                 self.send_response(204)
@@ -328,6 +330,41 @@ class Handler(BaseHTTPRequestHandler):
                         self.db_path, [r["path"] for r in rows],
                         source_ids=[r["id"] for r in rows])
                     self._err(err, 409) if err else self._ok("avviato")
+                else:
+                    self._err("Azione inesistente", 404)
+            elif parts[:2] == ["api", "keywords"]:
+                action = parts[2] if len(parts) > 2 else "save"
+                if action == "save":
+                    import datetime as _dt
+                    name = str(body.get("name", "")).strip().lstrip("#")
+                    terms = str(body.get("terms", "") or "").strip()
+                    if not name or not terms:
+                        self._err("Servono nome e termini (uno per riga)")
+                        return
+                    conn = dbm.connect(self.db_path)
+
+                    def do_write():
+                        conn.execute(
+                            "INSERT INTO keywords(name, terms, created) "
+                            "VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET "
+                            "terms=excluded.terms",
+                            (name, terms, _dt.datetime.now().isoformat(
+                                timespec="seconds")))
+
+                    _write_retry(do_write)
+                    conn.commit()
+                    self._ok(name)
+                elif action == "remove":
+                    conn = dbm.connect(self.db_path)
+
+                    def do_rm():
+                        conn.execute("DELETE FROM keywords WHERE name=? "
+                                     "COLLATE NOCASE",
+                                     (str(body.get("name", "")).lstrip("#"),))
+
+                    _write_retry(do_rm)
+                    conn.commit()
+                    self._ok("rimossa")
                 else:
                     self._err("Azione inesistente", 404)
             elif parts[:2] == ["api", "concepts"]:
@@ -457,7 +494,21 @@ class Handler(BaseHTTPRequestHandler):
     def _route_api_get(self, parts: list, qs: dict) -> None:
         conn = dbm.connect(self.db_path)
 
-        if parts == ["stats"]:
+        if parts == ["gsearch"]:
+            q = qs.get("q", [""])[0].strip()
+            limit = min(int(qs.get("limit", ["60"])[0]), 300)
+            if not q:
+                self._err("Query vuota")
+                return
+            results = semanticm.gsearch(conn, q, limit=limit)
+            tagmap = self._tags_of(conn, [r["id"] for r in results])
+            self._ok({"q": q, "n": len(results),
+                      "results": [dict(r, tags=tagmap.get(r["id"], []))
+                                  for r in results]})
+        elif parts == ["keywords"]:
+            self._ok([dict(r) for r in conn.execute(
+                "SELECT name, terms FROM keywords ORDER BY name")])
+        elif parts == ["stats"]:
             self._ok(self._stats(conn))
         elif parts == ["semantic"]:
             q = qs.get("q", [""])[0].strip()
@@ -679,6 +730,288 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # --- shell dell'applicazione (HTML+CSS+JS, nessuna dipendenza) -------------
+
+GAPP_SHELL = r"""<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocClassifier — ricerca documenti</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font:15px/1.5 -apple-system,'Segoe UI',Arial,sans-serif;
+     background:#fff;color:#202124;min-height:100dvh;display:flex;
+     flex-direction:column;align-items:center}
+header{width:100%;display:flex;justify-content:flex-end;gap:14px;
+       padding:14px 20px;font-size:13.5px}
+header a{color:#444;text-decoration:none}
+header a:hover{text-decoration:underline}
+.logo{font-size:42px;font-weight:600;letter-spacing:-1px;margin:8vh 0 22px;
+      text-align:center;user-select:none}
+.l1{color:#4285f4}.l2{color:#ea4335}.l3{color:#fbbc05}.l4{color:#34a853}
+.l5{color:#4285f4}.l6{color:#ea4335}.l7{color:#34a853}.l8{color:#4285f4}
+.l9{color:#ea4335}.l10{color:#fbbc05}.l11{color:#34a853}.l12{color:#4285f4}
+.sbox{display:flex;align-items:center;width:min(580px,92vw);
+      border:1px solid #dfe1e5;border-radius:26px;padding:2px 8px 2px 20px;
+      height:48px;transition:box-shadow .15s}
+.sbox:focus-within{box-shadow:0 1px 8px rgba(32,33,36,.28);border-color:transparent}
+.sbox input{flex:1;border:0;outline:0;font-size:17px;background:transparent;
+            min-width:0}
+.sbox button{border:0;background:none;font-size:17px;cursor:pointer;
+             color:#4285f4;padding:8px 10px}
+.hint{color:#70757a;font-size:13px;margin-top:12px;text-align:center;
+      padding:0 14px}
+.hint code{background:#f1f3f4;border-radius:4px;padding:1px 6px}
+/* ---- chip parole chiave ---- */
+#chips{width:min(720px,94vw);margin-top:14px;display:flex;gap:8px;
+       flex-wrap:wrap;justify-content:center}
+#fmtbar{width:min(720px,94vw);margin-top:16px;font-size:13px;color:#70757a;
+        display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+        justify-content:center}
+.flab{user-select:none}
+.fchip{border:1px solid #dadce0;border-radius:14px;padding:4px 11px;
+       cursor:pointer;user-select:none;background:#fff;color:#3c4043}
+.fchip.on{background:#e6f4ea;border-color:#34a853;color:#137333;
+          font-weight:600}
+.fchip.all{border-style:dashed}
+.chip{border:1px solid #dadce0;border-radius:18px;padding:7px 15px;
+      font-size:14px;cursor:pointer;user-select:none;background:#fff;
+      color:#3c4043}
+.chip:hover{background:#f8f9fa}
+.chip.plus{background:#e8f0fe;border-color:#aecbfa;color:#174ea6;
+           font-weight:600}
+.chip.minus{background:#fce8e6;border-color:#f6aea9;color:#a50e0e;
+            font-weight:600;text-decoration:line-through}
+.chip .st{font-weight:800;margin-left:4px}
+/* ---- risultati ---- */
+#results{width:min(680px,92vw);margin:26px 0 40px}
+.res{margin-bottom:22px}
+.res .t{font-size:18px;color:#1a0dab;cursor:pointer;word-break:break-word;
+        line-height:1.3}
+.res .t:hover{text-decoration:underline}
+.res .u{font-size:13px;color:#0d652d;margin-top:1px;word-break:break-all}
+.res .u .sc{color:#70757a}
+.res .s{font-size:14px;color:#4d5156;margin-top:3px;word-break:break-word}
+.nres{color:#70757a;font-size:13.5px;margin-bottom:18px}
+.empty{color:#70757a;text-align:center;padding:30px 0}
+/* ---- modale parole chiave ---- */
+#kmodal{position:fixed;inset:0;background:rgba(32,33,36,.5);display:none;
+        align-items:center;justify-content:center;z-index:9}
+#kmodal.on{display:flex}
+#kmodal .box{background:#fff;border-radius:12px;padding:22px;width:520px;
+             max-width:94vw;max-height:88dvh;overflow-y:auto}
+#kmodal h3{margin:0 0 10px}
+#kmodal input,#kmodal textarea{width:100%;padding:10px 12px;font-size:15px;
+  border:1px solid #dadce0;border-radius:8px;margin:6px 0;box-sizing:border-box;
+  font-family:inherit}
+#kmodal textarea{height:88px;resize:vertical}
+#kmodal button{border:0;border-radius:8px;padding:10px 16px;font-size:14.5px;
+  cursor:pointer;background:#1a73e8;color:#fff;font-weight:600}
+#kmodal button.gray{background:#f1f3f4;color:#202124}
+.krow{display:flex;align-items:center;gap:10px;padding:8px 2px;
+      border-bottom:1px solid #eee;font-size:14px}
+.krow .nm{font-weight:600;color:#1a73e8;min-width:110px}
+.krow .tm{flex:1;color:#5f6368;font-size:12.5px;word-break:break-word}
+.krow button{background:#f1f3f4;color:#a50e0e;padding:5px 10px;font-size:12.5px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;
+  background:#202124;color:#fff;padding:11px 20px;border-radius:8px;
+  font-size:14px;opacity:0;transition:opacity .25s;max-width:88vw;z-index:30;
+  text-align:center}
+#toast.on{opacity:1}
+</style></head><body>
+
+<header>
+  <a href="#" onclick="openKw()">⚙ Parole chiave</a>
+  <a href="/classic">interfaccia completa →</a>
+</header>
+
+<div class="logo"><span class="l1">D</span><span class="l2">o</span><span class="l3">c</span><span class="l4">C</span><span class="l5">l</span><span class="l6">a</span><span class="l7">s</span><span class="l8">s</span><span class="l9">i</span><span class="l10">f</span><span class="l11">i</span><span class="l12">e</span><span class="l1">r</span></div>
+
+<div class="sbox">
+  <input id="q" placeholder="mamma assicurazione  ·  mamma carciofi -pomodoro"
+         autocomplete="off">
+  <button onclick="run()" title="cerca">🔍</button>
+</div>
+<div class="hint"><code>ricetta +#mamma +#carciofi -#pomodoro</code> —
+  il vettore da cercare è la SOMMA dei termini: segno − = allontana ·
+  <code>#nome</code> = parola chiave · pesi: <code>2*assicurazione</code></div>
+
+<div id="fmtbar"><span class="flab">formati:</span><span id="fmt"></span></div>
+
+<div id="chips"></div>
+<div id="results"></div>
+
+<div id="kmodal"><div class="box">
+  <h3>Parole chiave</h3>
+  <div class="mini" style="color:#5f6368;font-size:13px;margin-bottom:10px">
+    Una parola chiave è un <b>vettore composto</b>: frasi (peso 1),
+    pesi <code>1.5*"frase"</code>, riferimenti <code>1.0*#altra</code> e
+    <code>-1.0*#altra</code>, documenti campione
+    <code>0.5*"D:\percorso\file.pdf"</code> — una voce per riga.
+    Cercare <b>#nome</b> usa questo vettore.</div>
+  <div id="klist"></div>
+  <h3 style="margin-top:16px;font-size:16px">Nuova parola chiave</h3>
+  <input id="kname" placeholder="nome, es. mamma" autocomplete="off">
+  <textarea id="kterms" placeholder="mamma&#10;mama&#10;1.0*&quot;madre&quot;&#10;0.5*&quot;D:\foto\mamma.jpg&quot;&#10;-0.5*#fratello"></textarea>
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <button onclick="saveKw()">Salva</button>
+    <button class="gray" onclick="hideKw()">Chiudi</button>
+  </div>
+</div></div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+let KW=[];
+
+async function api(path,opts){
+  const r=await fetch(path,opts);
+  const j=await r.json().catch(()=>({ok:false,error:"risposta non valida"}));
+  if(!j.ok)throw new Error(j.error||("errore "+r.status));
+  return j.data;
+}
+const post=(path,body)=>api(path,{method:"POST",
+  headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");
+  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("on"),3000);}
+
+/* ---- filtro formati (memorizzato nel browser) ---- */
+const ALLFMT=[".doc",".docx",".pdf",".xls",".xlsx",".ppt",".pptx",
+              ".txt",".rtf",".odt"];
+let FMT;
+try{FMT=JSON.parse(localStorage.getItem("doccl-fmt"));}catch(e){}
+if(!Array.isArray(FMT))FMT=[".doc",".docx"];   // default: solo Word
+function saveFmt(){localStorage.setItem("doccl-fmt",JSON.stringify(FMT));}
+function renderFmt(){
+  const box=$("#fmt");box.innerHTML="";
+  for(const f of ALLFMT){
+    const c=document.createElement("span");
+    c.className="fchip"+(FMT.includes(f)?" on":"");
+    c.textContent=f;
+    c.onclick=()=>{
+      FMT=FMT.includes(f)?FMT.filter(x=>x!==f):FMT.concat(f);
+      saveFmt();renderFmt();run();};
+    box.appendChild(c);
+  }
+  const all=document.createElement("span");
+  all.className="fchip all"+(FMT.length?"":" on");
+  all.textContent="tutti";
+  all.title="nessun filtro di formato";
+  all.onclick=()=>{FMT=[];saveFmt();renderFmt();run();};
+  box.appendChild(all);
+}
+
+/* ---- chip parole chiave ---- */
+async function loadKW(){
+  try{KW=await api("/api/keywords");}catch(e){KW=[];}
+  const box=$("#chips");box.innerHTML="";
+  for(const k of KW){
+    const c=document.createElement("span");
+    c.className="chip";c.textContent="#"+k.name;
+    c.onclick=()=>toggleKw(k.name);
+    box.appendChild(c);
+  }
+}
+function toggleKw(name){
+  const q=$("#q");
+  const toks=q.value.trim()?q.value.trim().split(/\s+/):[];
+  const t="#"+name;
+  const i=toks.indexOf(t);
+  if(i>=0)toks.splice(i,1);
+  else if(toks.includes("-"+t)){toks[toks.indexOf("-"+t)]=t;}
+  else toks.push(t);
+  q.value=toks.join(" ");
+  paintChips();
+  run();
+}
+function paintChips(){
+  const toks=$("#q").value.trim().split(/\s+/);
+  document.querySelectorAll("#chips .chip").forEach(c=>{
+    const name=c.textContent;   // "#mamma"
+    c.classList.remove("plus","minus");
+    if(toks.includes(name)){c.classList.add("plus");
+      c.innerHTML=name+'<span class="st">+</span>';}
+    else if(toks.includes("-"+name)){c.classList.add("minus");
+      c.innerHTML=name+'<span class="st">−</span>';}
+    else c.textContent=name;
+  });
+}
+
+/* ---- ricerca ---- */
+async function run(){
+  const q=$("#q").value.trim();
+  paintChips();
+  const box=$("#results");
+  if(!q){box.innerHTML="";return;}
+  box.innerHTML='<div class="empty">Ricerca…</div>';
+  try{
+    const d=await api("/api/gsearch?q="+encodeURIComponent(q));
+    let rows=d.results;
+    if(FMT.length)rows=rows.filter(r=>FMT.includes((r.ext||"").toLowerCase()));
+    if(!rows.length){
+      box.innerHTML='<div class="empty">Nessun documento per <b>'+
+        d.q+'</b>'+(FMT.length&&d.results.length?
+        " con i formati selezionati ("+d.results.length+" senza filtro)":
+        ".<br>Prova con meno termini, o senza il segno −.")+'</div>';
+      return;}
+    const head=document.createElement("div");
+    head.className="nres";
+    head.textContent=(FMT.length?rows.length+" di "+d.results.length+" — ":"")+
+      d.n+" documenti (ordine: più vicini al vettore della ricerca)";
+    box.appendChild(head);
+    for(const r of rows){
+      const div=document.createElement("div");div.className="res";
+      const t=document.createElement("div");t.className="t";
+      t.textContent=r.title||r.filename;
+      t.onclick=()=>window.open("/file/"+r.id,"_blank");
+      div.appendChild(t);
+      const u=document.createElement("div");u.className="u";
+      u.innerHTML='<span class="sc">'+r.score.toFixed(2)+' · </span>'+
+        r.kind+" · "+(r.date||"");
+      div.appendChild(u);
+      const p=document.createElement("div");p.className="u";
+      p.textContent=r.path;div.appendChild(p);
+      const s=document.createElement("div");s.className="s";
+      s.textContent=r.snippet;div.appendChild(s);
+      box.appendChild(div);
+    }
+  }catch(e){box.innerHTML='<div class="empty">⚠ '+e.message+'</div>';}
+}
+$("#q").addEventListener("keydown",e=>{if(e.key==="Enter")run();});
+$("#q").addEventListener("input",paintChips);
+
+/* ---- gestione parole chiave ---- */
+function openKw(){$("#kmodal").classList.add("on");loadKwList();}
+function hideKw(){$("#kmodal").classList.remove("on");}
+async function loadKwList(){
+  const box=$("#klist");box.innerHTML="";
+  for(const k of KW){
+    const row=document.createElement("div");row.className="krow";
+    const nm=document.createElement("span");nm.className="nm";
+    nm.textContent="#"+k.name;row.appendChild(nm);
+    const tm=document.createElement("span");tm.className="tm";
+    tm.textContent=(k.terms||"").replace(/\n/g," · ");row.appendChild(tm);
+    const rm=document.createElement("button");rm.textContent="Elimina";
+    rm.onclick=async()=>{await post("/api/keywords/remove",{name:k.name});
+      toast("Parola chiave eliminata");await loadKW();await loadKwList();};
+    row.appendChild(rm);box.appendChild(row);
+  }
+  if(!KW.length)box.innerHTML='<div class="mini" style="color:#5f6368">— nessuna parola chiave —</div>';
+}
+async function saveKw(){
+  const name=$("#kname").value.trim().replace(/^#/,"");
+  const terms=$("#kterms").value.trim();
+  if(!name||!terms){toast("Servono nome e termini");return;}
+  try{await post("/api/keywords/save",{name,terms});
+    toast("Parola chiave #"+name+" salvata");
+    $("#kname").value="";$("#kterms").value="";
+    await loadKW();await loadKwList();}
+  catch(e){toast("⚠ "+e.message);}
+}
+
+renderFmt();loadKW();
+</script></body></html>"""
 
 APP_SHELL = r"""<!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">

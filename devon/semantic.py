@@ -904,6 +904,169 @@ def concept_classify(conn: sqlite3.Connection, concept, limit: int = 500):
     return len(results), out
 
 
+# ------------------------------------------------- ricerca google-like --
+
+_TERM_RE = re.compile(r"^\s*([-+]?\d+(?:\.\d+)?)?\s*\*?\s*(.+?)\s*$")
+
+
+def _parse_terms(raw: str) -> list[tuple[float, str]]:
+    r"""Mini-linguaggio dei termini di una parola chiave, una voce per
+    riga: «frase» (peso 1), 1.5*"frase", -1.0*"frase", 1.0*#altrakeyword,
+    0.5*"D:\percorso\file.pdf" (documento campione con valore)."""
+    out = []
+    for line in re.split(r"[;\n]+", raw or ""):
+        line = line.strip()
+        if not line:
+            continue
+        m = _TERM_RE.match(line)
+        if not m:
+            continue
+        w = float(m.group(1)) if m.group(1) else 1.0
+        target = m.group(2).strip().strip('"')
+        if target:
+            out.append((w, target))
+    return out
+
+
+def _is_doc_path(t: str) -> bool:
+    return (":" in t[:3]) or ("/" in t) or ("\\" in t) or \
+        bool(re.search(r"\.\w{1,6}$", t))
+
+
+def _resolve_doc_pos(conn, data, path: str):
+    """Posizione del documento (per percorso) nella matrice, o None."""
+    import numpy as np
+    for cand in (path, path.replace("/", "\\"), path.replace("\\", "/")):
+        row = conn.execute(
+            "SELECT id FROM documents WHERE path = ? COLLATE NOCASE",
+            (cand,)).fetchone()
+        if not row:
+            row = conn.execute(
+                "SELECT id FROM documents WHERE path LIKE ? COLLATE NOCASE "
+                "ORDER BY LENGTH(path) LIMIT 1", ("%" + cand,)).fetchone()
+        if row:
+            pos = int(np.searchsorted(data["doc_ids"], row["id"]))
+            if pos < len(data["doc_ids"]) and \
+                    data["doc_ids"][pos] == row["id"]:
+                return pos
+    return None
+
+
+def keyword_vector(conn, data, name: str, depth: int = 0,
+                   seen: frozenset = frozenset(), memo=None):
+    """Vettore normalizzato di una parola chiave: somma algebrica dei
+    vettori dei suoi termini (frasi, riferimenti #ad altre parole
+    chiave, documenti campione), ognuno col suo peso. Con cache e
+    protezione dai riferimenti circolari."""
+    import numpy as np
+    memo = memo if memo is not None else {}
+    key = name.lower()
+    if key in memo:
+        return memo[key]
+    if key in seen or depth >= 3:
+        return None
+    row = conn.execute(
+        "SELECT terms FROM keywords WHERE name = ? COLLATE NOCASE",
+        (name,)).fetchone()
+    if not row:
+        return None
+    vecs = []
+    for w, target in _parse_terms(row["terms"]):
+        if target.startswith("#") or target.startswith("@"):
+            sub = keyword_vector(conn, data, target.lstrip("#@"),
+                                 depth + 1, seen | {key}, memo)
+            if sub is not None:
+                vecs.append(sub * w)
+        elif _is_doc_path(target) and data is not None:
+            pos = _resolve_doc_pos(conn, data, target)
+            if pos is not None:
+                vecs.append(_doc_matrix(data)[pos] * w)
+        elif embeddings_status()[0]:
+            try:
+                v = np.array(embed_query(target[:200]), dtype=np.float32)
+            except Exception:
+                continue
+            n = float(np.linalg.norm(v))
+            if n:
+                vecs.append((v / n) * w)
+    if not vecs:
+        memo[key] = None
+        return None
+    total = np.sum(np.stack(vecs), axis=0)
+    n = float(np.linalg.norm(total))
+    res = total / n if n else None
+    memo[key] = res
+    return res
+
+
+def gsearch(conn: sqlite3.Connection, query: str,
+            limit: int = 60) -> list[dict]:
+    """Ricerca esclusivamente vettoriale.
+
+    Il vettore «da cercare» è la somma algebrica dei vettori dei
+    termini della query: +ricetta, +#mamma, -#pomodoro, 2*assicurazione.
+    I #nomi si espandono nel vettore della parola chiave (che a sua volta
+    è composto da frasi, altre parole chiave e documenti campione
+    pesati). Il punteggio di ogni documento è la similarità del suo
+    blocco più vicino al vettore composto."""
+    data = _load_embeddings_np(conn)
+    if data is None or not embeddings_status()[0]:
+        raise RuntimeError(
+            "la ricerca vettoriale richiede gli embedding: "
+            "lancia «Calcola embedding» (o python -m devon embed)")
+    import numpy as np
+    q = np.zeros_like(data["mat"][0])
+    used = 0
+    for tok in query.split():
+        if not tok:
+            continue
+        w = 1.0
+        body = tok
+        m = re.match(r"^([+-]?\d+\.?\d*)\*(.+)$", tok)
+        if m:
+            w = float(m.group(1))
+            body = m.group(2)
+        elif tok.startswith("-"):
+            w = -1.0
+            body = tok[1:]
+        elif tok.startswith("+"):
+            body = tok[1:]
+        if not body:
+            continue
+        if body.startswith("#"):
+            v = keyword_vector(conn, data, body[1:])
+        else:
+            v = np.array(embed_query(body[:200]), dtype=np.float32)
+            n = float(np.linalg.norm(v))
+            v = v / n if n else None
+        if v is None or not np.any(v):
+            continue
+        n = float(np.linalg.norm(v)) or 1.0
+        q = q + (v / n) * w
+        used += 1
+    if not used:
+        raise RuntimeError("nessun termine valido nella query")
+    n = float(np.linalg.norm(q)) or 1.0
+    q = q / n
+    sims = data["mat"] @ q
+    dsims = np.maximum.reduceat(sims, data["starts"])
+    dsims[~data["doc_real"]] = -1.0
+    order = np.argsort(-dsims)[:limit]
+    top_ids = [int(data["doc_ids"][j]) for j in order if dsims[j] > 0]
+    scores = {int(data["doc_ids"][j]): float(dsims[j]) for j in order}
+    out = []
+    for r in conn.execute(
+            "SELECT id, path, filename, title, kind, ext, size, date "
+            "FROM documents WHERE id IN (%s)"
+            % ",".join("?" * len(top_ids)), top_ids):
+        d = dict(r)
+        d["score"] = round(scores.get(r["id"], 0.0), 3)
+        d["snippet"] = (d["filename"] + " — " + d["title"])[:150]
+        out.append(d)
+    out.sort(key=lambda d: -d["score"])
+    return out
+
+
 def suggest_groups_semantic(conn: sqlite3.Connection, doc_id: int,
                             limit: int = 4) -> list[dict] | None:
     """Gruppi manuali consigliati per contenuto, sui vettori embedding.
