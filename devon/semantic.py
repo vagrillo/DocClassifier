@@ -1060,6 +1060,34 @@ def gsearch(conn: sqlite3.Connection, query: str,
         except Exception:
             pass
 
+    def fname_bonus(words: list[str], bonus: float, table: dict):
+        """Bonus se TUTTE le parole compaiono nel nome del file."""
+        conds = " AND ".join(
+            "filename LIKE ? ESCAPE '\\'" for _ in words)
+        params = ["%" + w.replace("%", r"\%").replace("_", r"\_") + "%"
+                  for w in words]
+        try:
+            for r in conn.execute(
+                    "SELECT id FROM documents WHERE " + conds +
+                    " LIMIT 4000", params):
+                table[r["id"]] = table.get(r["id"], 0.0) + bonus
+        except Exception:
+            pass
+
+    def quoted_single(w: str) -> str:
+        return '"%s"' % w.replace('"', '""')
+
+    def phrase_bonus(words: list[str], w_base: float, w_adj: float,
+                     table: dict):
+        """Gerarchia di pertinenza: tutte le parole presenti (base) e
+        in più, se sono ADIACENTI in uno dei due ordini (il nome!), un
+        forte bonus — «bettilomo rosa» nel nome o nel testo."""
+        quoted = ['"%s"' % x.replace('"', '""') for x in words]
+        fts_add(" AND ".join(quoted), w_base, table)
+        if len(words) > 1:
+            fts_add('"%s"' % " ".join(quoted), w_adj, table)
+            fts_add('"%s"' % " ".join(reversed(quoted)), w_adj, table)
+
     def fts_bonus(words: list[str], sign: float, table: dict):
         words = [w for w in words if len(w) > 1][:12]
         if not words:
@@ -1091,22 +1119,25 @@ def gsearch(conn: sqlite3.Connection, query: str,
                 target_table = lex_pos if group_sign > 0 else lex_neg
                 for iw, phrase in items:
                     words = phrase.split()
-                    quoted = ['"%s"' % x.replace('"', '""') for x in words]
                     if len(words) > 1:
-                        # frase multi-parola (es. nomi propri): conta che
-                        # TUTTE le parole siano presenti, in qualsiasi ordine
-                        fts_add(" AND ".join(quoted), iw * group_sign,
-                                target_table)
+                        phrase_bonus(words, 0.4 * iw * group_sign,
+                                     0.8 * iw * group_sign, target_table)
+                        fname_bonus(words, 0.5 * iw * group_sign,
+                                    target_table)
                     else:
-                        fts_add(quoted[0], iw * 0.5 * group_sign,
-                                target_table)
+                        fts_add(quoted_single(words[0]),
+                                0.4 * iw * group_sign, target_table)
+                        fname_bonus(words, 0.3 * iw * group_sign,
+                                    target_table)
         else:
             v = np.array(embed_query(body[:200]), dtype=np.float32)
             n = float(np.linalg.norm(v))
             v = v / n if n else None
             fts_add('"%s"' % body.replace('"', '""'),
-                    0.5 * (1 if w >= 0 else -1),
+                    0.4 * (1 if w >= 0 else -1),
                     lex_pos if w >= 0 else lex_neg)
+            fname_bonus([body], 0.3 * (1 if w >= 0 else -1),
+                        lex_pos if w >= 0 else lex_neg)
         if v is None or not np.any(v):
             continue
         n = float(np.linalg.norm(v)) or 1.0
@@ -1132,10 +1163,14 @@ def gsearch(conn: sqlite3.Connection, query: str,
     top_ids = [int(data["doc_ids"][j]) for j in order if total[j] > 0.05]
     scores = {int(data["doc_ids"][j]): float(total[j]) for j in order}
     out = []
-    for r in conn.execute(
-            "SELECT id, path, filename, title, kind, ext, size, date "
-            "FROM documents WHERE id IN (%s)"
-            % ",".join("?" * len(top_ids)), top_ids):
+    seen_hash = set()
+    for did in top_ids:
+        r = conn.execute(
+            "SELECT id, path, filename, title, kind, ext, size, date, "
+            "sha256 FROM documents WHERE id=?", (did,)).fetchone()
+        if r["sha256"] and r["sha256"] in seen_hash:
+            continue  # copia identica già mostrata
+        seen_hash.add(r["sha256"])
         d = dict(r)
         d["score"] = round(scores.get(r["id"], 0.0), 3)
         d["snippet"] = (d["filename"] + " — " + d["title"])[:150]

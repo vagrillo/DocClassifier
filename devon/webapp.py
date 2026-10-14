@@ -948,7 +948,10 @@ async function run(){
   try{
     const d=await api("/api/gsearch?q="+encodeURIComponent(q));
     let rows=d.results;
-    if(FMT.length)rows=rows.filter(r=>FMT.includes((r.ext||"").toLowerCase()));
+    // il filtro esclude solo i file con estensione nota e non selezionata:
+    // i file senza estensione passano sempre
+    if(FMT.length)rows=rows.filter(r=>!(r.ext||"")||
+      FMT.includes(r.ext.toLowerCase()));
     if(!rows.length){
       box.innerHTML='<div class="empty">Nessun documento per <b>'+
         d.q+'</b>'+(FMT.length&&d.results.length?
