@@ -999,16 +999,46 @@ def keyword_vector(conn, data, name: str, depth: int = 0,
     return res
 
 
+def _kw_lex(conn, name: str, depth: int = 0,
+            seen: frozenset = frozenset()) -> tuple[list, list]:
+    """((peso, frase) positive, (peso, frase) negative) di una parola
+    chiave: le frasi dei termini (i riferimenti #ad altre parole chiave
+    vengono risolti ricorsivamente in modo segn-aware — un riferimento
+    negativo scambia positivo/negativo)."""
+    if depth >= 3 or name.lower() in seen:
+        return [], []
+    row = conn.execute(
+        "SELECT terms FROM keywords WHERE name = ? COLLATE NOCASE",
+        (name,)).fetchone()
+    if not row:
+        return [], []
+    pos: list = []
+    neg: list = []
+    for w, target in _parse_terms(row["terms"]):
+        sign = 1.0 if w >= 0 else -1.0
+        if target.startswith(("#", "@")):
+            p2, n2 = _kw_lex(conn, target.lstrip("#@"),
+                             depth + 1, seen | {name.lower()})
+            if sign > 0:
+                pos += p2
+                neg += n2
+            else:
+                pos += n2
+                neg += p2
+        elif not _is_doc_path(target):
+            (pos if sign > 0 else neg).append((abs(w), target))
+    return pos, neg
+
+
 def gsearch(conn: sqlite3.Connection, query: str,
             limit: int = 60) -> list[dict]:
-    """Ricerca esclusivamente vettoriale.
-
-    Il vettore «da cercare» è la somma algebrica dei vettori dei
-    termini della query: +ricetta, +#mamma, -#pomodoro, 2*assicurazione.
-    I #nomi si espandono nel vettore della parola chiave (che a sua volta
-    è composto da frasi, altre parole chiave e documenti campione
-    pesati). Il punteggio di ogni documento è la similarità del suo
-    blocco più vicino al vettore composto."""
+    """Ricerca ibrida: il vettore «da cercare» è la somma algebrica dei
+    vettori dei termini (+ricetta, +#mamma, -#pomodoro, 2*parola) e il
+    punteggio di base è la similarità del blocco più vicino; a questa si
+    somma un forte bonus lessicale (+0,50 a termine) per i documenti che
+    contengono le parole ESATTE — indispensabile per i nomi propri rari,
+    che gli embedding non sanno matchingare. I #nomi si espandono nel
+    vettore della parola chiave."""
     data = _load_embeddings_np(conn)
     if data is None or not embeddings_status()[0]:
         raise RuntimeError(
@@ -1016,7 +1046,27 @@ def gsearch(conn: sqlite3.Connection, query: str,
             "lancia «Calcola embedding» (o python -m devon embed)")
     import numpy as np
     q = np.zeros_like(data["mat"][0])
+    lex_pos: dict[int, float] = {}
+    lex_neg: dict[int, float] = {}
     used = 0
+
+    def fts_add(match: str, bonus: float, table: dict):
+        try:
+            for r in conn.execute(
+                    "SELECT d.id FROM documents d JOIN docs_fts f "
+                    "ON f.rowid=d.id WHERE docs_fts MATCH ? LIMIT 8000",
+                    (match,)):
+                table[r["id"]] = table.get(r["id"], 0.0) + bonus
+        except Exception:
+            pass
+
+    def fts_bonus(words: list[str], sign: float, table: dict):
+        words = [w for w in words if len(w) > 1][:12]
+        if not words:
+            return
+        fts_add(" OR ".join('"%s"' % w.replace('"', '""') for w in words),
+                0.5 * sign, table)
+
     for tok in query.split():
         if not tok:
             continue
@@ -1035,25 +1085,52 @@ def gsearch(conn: sqlite3.Connection, query: str,
             continue
         if body.startswith("#"):
             v = keyword_vector(conn, data, body[1:])
+            s = 1.0 if w >= 0 else -1.0
+            pos_items, neg_items = _kw_lex(conn, body[1:])
+            for items, group_sign in ((pos_items, s), (neg_items, -s)):
+                target_table = lex_pos if group_sign > 0 else lex_neg
+                for iw, phrase in items:
+                    words = phrase.split()
+                    quoted = ['"%s"' % x.replace('"', '""') for x in words]
+                    if len(words) > 1:
+                        # frase multi-parola (es. nomi propri): conta che
+                        # TUTTE le parole siano presenti, in qualsiasi ordine
+                        fts_add(" AND ".join(quoted), iw * group_sign,
+                                target_table)
+                    else:
+                        fts_add(quoted[0], iw * 0.5 * group_sign,
+                                target_table)
         else:
             v = np.array(embed_query(body[:200]), dtype=np.float32)
             n = float(np.linalg.norm(v))
             v = v / n if n else None
+            fts_add('"%s"' % body.replace('"', '""'),
+                    0.5 * (1 if w >= 0 else -1),
+                    lex_pos if w >= 0 else lex_neg)
         if v is None or not np.any(v):
             continue
         n = float(np.linalg.norm(v)) or 1.0
         q = q + (v / n) * w
         used += 1
-    if not used:
+    if not used and not lex_pos:
         raise RuntimeError("nessun termine valido nella query")
     n = float(np.linalg.norm(q)) or 1.0
-    q = q / n
-    sims = data["mat"] @ q
+    q = q / n if n else q
+
+    sims = data["mat"] @ q if used else np.zeros(len(data["mat"]))
     dsims = np.maximum.reduceat(sims, data["starts"])
-    dsims[~data["doc_real"]] = -1.0
-    order = np.argsort(-dsims)[:limit]
-    top_ids = [int(data["doc_ids"][j]) for j in order if dsims[j] > 0]
-    scores = {int(data["doc_ids"][j]): float(dsims[j]) for j in order}
+    vec_part = np.where(data["doc_real"], dsims, 0.0)
+    lex_arr = np.zeros(len(data["doc_ids"]), dtype=np.float32)
+    for table, sign in ((lex_pos, 1.0), (lex_neg, -1.0)):
+        for did, b in table.items():
+            pos2 = int(np.searchsorted(data["doc_ids"], did))
+            if pos2 < len(data["doc_ids"]) and \
+                    data["doc_ids"][pos2] == did:
+                lex_arr[pos2] += sign * b
+    total = vec_part + lex_arr
+    order = np.argsort(-total)[:limit]
+    top_ids = [int(data["doc_ids"][j]) for j in order if total[j] > 0.05]
+    scores = {int(data["doc_ids"][j]): float(total[j]) for j in order}
     out = []
     for r in conn.execute(
             "SELECT id, path, filename, title, kind, ext, size, date "
