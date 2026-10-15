@@ -550,7 +550,14 @@ class Handler(BaseHTTPRequestHandler):
     def _route_api_get(self, parts: list, qs: dict) -> None:
         conn = dbm.connect(self.db_path)
 
-        if parts == ["gsearch"]:
+        if parts == ["status"]:
+            docs = conn.execute(
+                "SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
+            emb = conn.execute(
+                "SELECT COUNT(*) AS n FROM embeddings").fetchone()["n"]
+            self._ok({"docs": docs, "embeddings": emb,
+                      "scanning": _import_state["running"]})
+        elif parts == ["gsearch"]:
             q = qs.get("q", [""])[0].strip()
             limit = min(int(qs.get("limit", ["60"])[0]), 300)
             if not q:
@@ -869,6 +876,9 @@ header a:hover{text-decoration:underline}
 .krow .nm{font-weight:600;color:#1a73e8;min-width:110px}
 .krow .tm{flex:1;color:#5f6368;font-size:12.5px;word-break:break-word}
 .krow button{background:#f1f3f4;color:#a50e0e;padding:5px 10px;font-size:12.5px}
+#status{position:fixed;left:12px;bottom:10px;font-size:11.5px;
+        color:#9aa0a6;user-select:none;z-index:5}
+#status .sc{color:#d8a413}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;
   background:#202124;color:#fff;padding:11px 20px;border-radius:8px;
   font-size:14px;opacity:0;transition:opacity .25s;max-width:88vw;z-index:30;
@@ -924,12 +934,24 @@ header a:hover{text-decoration:underline}
   </div>
 </div></div>
 
+<div id="status">…</div>
 <div id="toast"></div>
 
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
 let KW=[];
+
+/* ---- status indicizzazione (in basso a sinistra) ---- */
+async function loadStatus(){
+  try{
+    const st=await api("/api/status");
+    $("#status").innerHTML=
+      '📄 '+st.docs+' documenti · 🧮 '+st.embeddings+' embeddings'+
+      (st.scanning?' · <span class="sc">⏳ scansione in corso</span>':'');
+  }catch(e){}
+}
+loadStatus();setInterval(loadStatus,10000);
 
 async function api(path,opts){
   const r=await fetch(path,opts);
