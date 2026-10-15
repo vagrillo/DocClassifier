@@ -174,6 +174,7 @@ def ingest_folder(
                      digest, title, author, mtime[:10], stored_text))
                 stats["nuovi"] += 1
             stats["ultimo"] = strpath
+            dirty = True
 
             done = stats["nuovi"] + stats["aggiornati"]
             if done and done % 500 == 0:

@@ -946,8 +946,11 @@ let KW=[];
 async function loadStatus(){
   try{
     const st=await api("/api/status");
+    const t=new Date().toLocaleTimeString("it-IT",
+      {hour:"2-digit",minute:"2-digit"});
     $("#status").innerHTML=
       '📄 '+st.docs+' documenti · 🧮 '+st.embeddings+' embeddings'+
+      ' · aggiornato '+t+
       (st.scanning?' · <span class="sc">⏳ scansione in corso</span>':'');
   }catch(e){}
 }

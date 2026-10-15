@@ -26,6 +26,7 @@ import random
 import re
 import sqlite3
 import struct
+import time
 from collections import Counter, defaultdict
 
 from . import search as searchm
@@ -203,13 +204,22 @@ def embed_all(conn: sqlite3.Connection, progress: dict | None = None) -> dict:
 
 def _flush(conn, model, batch, done_chunks, stats) -> int:
     vectors = list(model.embed([t for _, _, t in batch]))
-    for (doc_id, idx, _), vec in zip(batch, vectors):
-        dim = len(vec)
-        conn.execute(
-            "INSERT OR REPLACE INTO embeddings(doc_id, chunk, model, dim, vec) "
-            "VALUES(?,?,?,?,?)",
-            (doc_id, idx, MODEL_NAME, dim,
-             struct.pack(f"{dim}f", *[float(x) for x in vec])))
+    for attempt in range(6):
+        try:
+            for (doc_id, idx, _), vec in zip(batch, vectors):
+                dim = len(vec)
+                conn.execute(
+                    "INSERT OR REPLACE INTO embeddings"
+                    "(doc_id, chunk, model, dim, vec) VALUES(?,?,?,?,?)",
+                    (doc_id, idx, MODEL_NAME, dim,
+                     struct.pack(f"{dim}f", *[float(x) for x in vec])))
+            break
+        except sqlite3.OperationalError as exc:
+            # il lock arriva dall'import concorrente: riprova con calma
+            if ("locked" in str(exc) or "busy" in str(exc)) and attempt < 5:
+                time.sleep(15)
+                continue
+            raise
     done_chunks += len(batch)
     stats["done"] = done_chunks
     if done_chunks % (EMBED_CHUNK * 20) == 0:
