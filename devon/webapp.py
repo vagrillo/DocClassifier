@@ -203,6 +203,47 @@ def smart_group_members(conn, query: str, limit: int = 2000):
     return [dict(r) for r in rows]
 
 
+# --- catalogo di categorie di vita pronte all'uso -------------------------
+
+PRESET_CATALOG: dict[str, str] = {
+    "famiglia": "mamma\nmadre\npapà\npadre\nfratello\nsorella\nfiglio\n"
+                "figlia\nfamiglia\ngenitori\nnonno\nnonna\nmatrimonio\nfigli",
+    "salute": "salute\nmedico\ndottore\nospedale\nricetta\nreferto\nanalisi\n"
+              "visita\nfarmacia\ncura\ndiagnosi\ntessera sanitaria\nclinica",
+    "lavoro": "lavoro\nufficio\nazienda\nbusta paga\ncontratto\ncollega\n"
+              "riunione\ndatore\ndipendente\nferie\nsmart working\nCED",
+    "finanza": "banca\nconto corrente\nmutuo\nprestito\ntasse\nfisco\n730\n"
+               "dichiarazione\nimposte\nfattura\ninvestimento\nspese",
+    "casa": "casa\naffitto\ncondominio\nbollette\nutenze\nproprietario\n"
+            "locazione\nappartamento\nristrutturazione\ncaldaia",
+    "veicoli": "auto\nautomobile\nmacchina\npatente\nbollo\nrevisione\nmulta\n"
+               "veicolo\ngaranzia\nofficina",
+    "viaggi": "viaggio\nvacanza\nbiglietto\nprenotazione\nhotel\nvolo\n"
+              "passaporto\nitinerario\nvaligia\naeroporto",
+    "identita": "carta d'identità\ncodice fiscale\ntessera sanitaria\n"
+                "passaporto\ncertificato\nresidenza\nanagrafe\nprocura",
+    "scuola": "scuola\nuniversità\nesame\nlaurea\nvoto\ninsegnante\ncompiti\n"
+              "iscrizione\npagella\nlibro di testo",
+    "hobby": "hobby\nsport\nricetta\ncucina\nfotografia\nmusica\n"
+             "collezione\npartita",
+}
+
+
+def _preset_rows(conn) -> list[dict]:
+    existing = {r["name"].lower() for r in
+                conn.execute("SELECT name FROM keywords")}
+    return [{"name": n, "terms": t, "exists": n.lower() in existing}
+            for n, t in PRESET_CATALOG.items()]
+
+
+def _write_keyword(conn, name: str, terms: str) -> None:
+    import datetime as _dt
+    conn.execute(
+        "INSERT INTO keywords(name, terms, created) VALUES(?,?,?) "
+        "ON CONFLICT(name) DO UPDATE SET terms=excluded.terms",
+        (name, terms, _dt.datetime.now().isoformat(timespec="seconds")))
+
+
 class Handler(BaseHTTPRequestHandler):
     db_path: object = None
 
@@ -455,6 +496,21 @@ class Handler(BaseHTTPRequestHandler):
                     self._ok("aggiunto")
                 else:
                     self._err("Azione inesistente", 404)
+            elif parts[:2] == ["api", "presets"]:
+                names = body.get("names") or []
+                if isinstance(names, str):
+                    names = [names]
+                conn = dbm.connect(self.db_path)
+
+                def do_write():
+                    for n in names:
+                        n = str(n).strip().lstrip("#").lower()
+                        if n in PRESET_CATALOG:
+                            _write_keyword(conn, n, PRESET_CATALOG[n])
+
+                _write_retry(do_write)
+                conn.commit()
+                self._ok("create")
             elif parts[:2] == ["api", "embed"]:
                 ok, msg = semanticm.embeddings_status()
                 if not ok:
@@ -508,6 +564,8 @@ class Handler(BaseHTTPRequestHandler):
         elif parts == ["keywords"]:
             self._ok([dict(r) for r in conn.execute(
                 "SELECT name, terms FROM keywords ORDER BY name")])
+        elif parts == ["presets"]:
+            self._ok(_preset_rows(conn))
         elif parts == ["stats"]:
             self._ok(self._stats(conn))
         elif parts == ["semantic"]:
@@ -840,7 +898,16 @@ header a:hover{text-decoration:underline}
 <div id="results"></div>
 
 <div id="kmodal"><div class="box">
-  <h3>Parole chiave</h3>
+  <h3 style="margin:0 0 10px">Parole chiave e categorie</h3>
+  <h4 class="sec" style="margin-top:0">📋 Categorie pronte all'uso</h4>
+  <div class="mini" style="color:#5f6368;font-size:13px;margin-bottom:8px">
+    Spunta le categorie della tua vita e creale in un colpo solo:
+    i loro tag compaiono cliccabili nella pagina di ricerca.</div>
+  <div id="presetlist"></div>
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button onclick="addPresets()">Crea le selezionate</button>
+  </div>
+  <h4 class="sec">Le tue parole chiave</h4>
   <div class="mini" style="color:#5f6368;font-size:13px;margin-bottom:10px">
     Una parola chiave è un <b>vettore composto</b>: frasi (peso 1),
     pesi <code>1.5*"frase"</code>, riferimenti <code>1.0*#altra</code> e
@@ -902,10 +969,47 @@ function renderFmt(){
   box.appendChild(all);
 }
 
+/* ---- categorie pronte ---- */
+let PRESETS=[],chosen=new Set();
+async function loadPresets(){
+  try{PRESETS=await api("/api/presets");}catch(e){PRESETS=[];}
+  const box=$("#presetlist");box.innerHTML="";
+  for(const p of PRESETS){
+    const row=document.createElement("label");
+    row.className="krow";row.style.cursor="pointer";
+    const cb=document.createElement("input");cb.type="checkbox";
+    cb.checked=p.exists;cb.disabled=p.exists;
+    cb.onchange=()=>{cb.checked?chosen.add(p.name):chosen.delete(p.name);};
+    row.appendChild(cb);
+    const nm=document.createElement("span");nm.className="nm";
+    nm.textContent="#"+p.name;row.appendChild(nm);
+    const tm=document.createElement("span");tm.className="tm";
+    tm.textContent=(p.terms||"").replace(/\n/g," · ")+
+      (p.exists?"  (già creata)":"");
+    row.appendChild(tm);
+    box.appendChild(row);
+  }
+}
+async function addPresets(){
+  const names=[...chosen];
+  if(!names.length){toast("Spunta almeno una categoria");return;}
+  try{
+    await post("/api/presets/add",{names});
+    toast("✔ Create "+names.length+" categorie: "+names.join(", "));
+    chosen.clear();
+    await loadKW();await loadPresets();
+  }catch(e){toast("⚠ "+e.message,true);}
+}
+
 /* ---- chip parole chiave ---- */
 async function loadKW(){
   try{KW=await api("/api/keywords");}catch(e){KW=[];}
   const box=$("#chips");box.innerHTML="";
+  if(!KW.length){
+    const hint=document.createElement("span");
+    hint.className="chip";hint.style.background="#f1f3f4";
+    hint.textContent="Inizia scegliendo le categorie pronte → ⚙ Parole chiave";
+    hint.onclick=openKw;box.appendChild(hint);}
   for(const k of KW){
     const c=document.createElement("span");
     c.className="chip";c.textContent="#"+k.name;
@@ -985,7 +1089,7 @@ $("#q").addEventListener("keydown",e=>{if(e.key==="Enter")run();});
 $("#q").addEventListener("input",paintChips);
 
 /* ---- gestione parole chiave ---- */
-function openKw(){$("#kmodal").classList.add("on");loadKwList();}
+function openKw(){$("#kmodal").classList.add("on");loadKwList();loadPresets();}
 function hideKw(){$("#kmodal").classList.remove("on");}
 async function loadKwList(){
   const box=$("#klist");box.innerHTML="";
