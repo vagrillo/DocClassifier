@@ -900,7 +900,9 @@ header a:hover{text-decoration:underline}
 </div>
 <div class="hint"><code>recipe +#mum +#artichokes -#tomato</code> —
   the to-search vector is the SUM of the terms: sign − = push away ·
-  <code>#name</code> = keyword · weights: <code>2*insurance</code></div>
+  <code>#name</code> = keyword · weights: <code>2*insurance</code> ·
+  filters: <code>kind:email</code> <code>ext:.pdf</code>
+  <code>tag:…</code></div>
 
 <div id="fmtbar"><span class="flab">formats:</span><span id="fmt"></span></div>
 

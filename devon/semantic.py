@@ -1048,17 +1048,44 @@ def gsearch(conn: sqlite3.Connection, query: str,
     somma un forte bonus lessicale (+0,50 a termine) per i documenti che
     contengono le parole ESATTE — indispensabile per i nomi propri rari,
     che gli embedding non sanno matchingare. I #nomi si espandono nel
-    vettore della parola chiave."""
+    vettore della parola chiave. I filtri kind:/ext:/path:/tag:/group:/
+    topic: restringono i candidati (es. «#lavoro kind:email» = le email
+    del lavoro); con soli filtri l'elenco è ordinato per data."""
+    tokens = query.split()
+    filter_tokens = [t for t in tokens
+                     if re.match(r"^(kind|ext|path|tag|group|topic):", t)]
+    allowed = None
+    if filter_tokens:
+        pq = searchm.parse_query(" ".join(filter_tokens))
+        allowed = _filter_ids(conn, pq)
+        if allowed is not None and not allowed:
+            return []
+
     data = _load_embeddings_np(conn)
     if data is None or not embeddings_status()[0]:
+        if allowed is not None:
+            idl = sorted(allowed)[:limit]
+            out = []
+            for r in conn.execute(
+                    "SELECT id, path, filename, title, kind, ext, size, "
+                    "date FROM documents WHERE id IN (%s) "
+                    "ORDER BY date DESC, id DESC LIMIT ?"
+                    % ",".join("?" * len(idl)), idl + [limit]):
+                d = dict(r)
+                d["score"] = 0.0
+                d["snippet"] = (d["filename"] + " — " + d["title"])[:150]
+                out.append(d)
+            return out
         raise RuntimeError(
-            "la ricerca vettoriale richiede gli embedding: "
-            "lancia «Calcola embedding» (o python -m devon embed)")
+            "vector search requires embeddings: "
+            "run «Compute embeddings» (or python -m devon embed)")
     import numpy as np
     q = np.zeros_like(data["mat"][0])
     lex_pos: dict[int, float] = {}
     lex_neg: dict[int, float] = {}
     used = 0
+    # i termini vettoriali sono i token che NON sono filtri
+    words = [t for t in tokens if t not in filter_tokens]
 
     def fts_add(match: str, bonus: float, table: dict):
         try:
@@ -1105,7 +1132,7 @@ def gsearch(conn: sqlite3.Connection, query: str,
         fts_add(" OR ".join('"%s"' % w.replace('"', '""') for w in words),
                 0.5 * sign, table)
 
-    for tok in query.split():
+    for tok in words:
         if not tok:
             continue
         w = 1.0
@@ -1154,7 +1181,20 @@ def gsearch(conn: sqlite3.Connection, query: str,
         q = q + (v / n) * w
         used += 1
     if not used and not lex_pos:
-        raise RuntimeError("nessun termine valido nella query")
+        if allowed is not None:
+            idl = sorted(allowed)[:limit]
+            out = []
+            for r in conn.execute(
+                    "SELECT id, path, filename, title, kind, ext, size, "
+                    "date FROM documents WHERE id IN (%s) "
+                    "ORDER BY date DESC, id DESC LIMIT ?"
+                    % ",".join("?" * len(idl)), idl + [limit]):
+                d = dict(r)
+                d["score"] = 0.0
+                d["snippet"] = (d["filename"] + " — " + d["title"])[:150]
+                out.append(d)
+            return out
+        raise RuntimeError("no valid terms in the query")
     n = float(np.linalg.norm(q)) or 1.0
     q = q / n if n else q
 
@@ -1169,9 +1209,27 @@ def gsearch(conn: sqlite3.Connection, query: str,
                     data["doc_ids"][pos2] == did:
                 lex_arr[pos2] += sign * b
     total = vec_part + lex_arr
-    order = np.argsort(-total)[:limit]
+    if allowed is not None:
+        keep = np.isin(data["doc_ids"], np.array(sorted(allowed),
+                                                 dtype=np.int64))
+        total = np.where(keep, total, -1.0)
+    order = np.argsort(-total)
     top_ids = [int(data["doc_ids"][j]) for j in order if total[j] > 0.05]
-    scores = {int(data["doc_ids"][j]): float(total[j]) for j in order}
+    scores = {int(data["doc_ids"][j]): float(total[j]) for j in order
+              if total[j] > 0.05}
+    if allowed is not None:
+        # documenti ammessi dai filtri ma non embeddati (non stanno nella
+        # matrice): entrano con il solo punteggio lessicale — così una
+        # ricerca per categoria copre anche i documenti più recenti
+        embedded = {int(x) for x in data["doc_ids"]}
+        for did in sorted(allowed):
+            if did in scores or did in embedded:
+                continue
+            b = lex_pos.get(did, 0.0) - lex_neg.get(did, 0.0)
+            if b > 0.05:
+                top_ids.append(did)
+                scores[did] = b
+    top_ids = top_ids[:limit]
     out = []
     seen_hash = set()
     for did in top_ids:
