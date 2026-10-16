@@ -64,8 +64,8 @@ def start_job(kind: str, db_path, fn, *args, **kwargs) -> str | None:
     """Avvia un lavoro semantico in background (uno per tipo)."""
     state = _jobs[kind]
     if state["running"]:
-        return {"embed": "Calcolo embedding già in corso.",
-                "cluster": "Raggruppamento già in corso."}[kind]
+        return {"embed": "Embedding already running.",
+                "cluster": "Clustering already running."}[kind]
     state.update(running=True, stats={"fatto": False})
     state["stats"] = stats = {
         "embed": {"done": 0, "total": 0, "fatto": False, "errore": None},
@@ -112,18 +112,18 @@ def start_import(db_path, raw_paths, source_ids=None) -> str | None:
     Ritorna None se tutto bene, altrimenti un messaggio d'errore."""
     with _import_lock:
         if _import_state["running"]:
-            return "Un'importazione è già in corso."
+            return "An import is already running."
         if isinstance(raw_paths, str):
             paths = [raw_paths]
         else:
             paths = list(raw_paths)
         if not paths:
-            return "Nessun percorso fornito."
+            return "No path provided."
         resolved = []
         for raw in paths:
             p = Path(str(raw)).expanduser()
             if not p.exists():
-                return f"Percorso inesistente: {p}"
+                return f"Path not found: {p}"
             resolved.append(p)
         _import_state.update(
             running=True, path=" + ".join(str(p) for p in resolved),
@@ -174,7 +174,7 @@ INLINE_TYPES = {
 def smart_group_members(conn, query: str, limit: int = 2000):
     """Membri di un gruppo smart. Con prefisso «sem:» unisce le
     corrispondenze lessicali (FTS, in OR tra le parole della query) e
-    quelle semantiche sopra soglia (0.5: conservativa)."""
+    quelle semantiche sopra threshold (0.5: conservativa)."""
     if not query.startswith("sem:"):
         return [dict(r) for r in searchm.search(conn, query, limit=limit)]
     term = query[4:].strip()
@@ -280,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = path.read_bytes()
         except OSError as exc:
-            self._err(f"File non leggibile: {exc}", 404)
+            self._err(f"Cannot read file: {exc}", 404)
             return
         ctype = INLINE_TYPES.get(path.suffix.lower()) or \
             mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -314,9 +314,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parts[0] == "api":
                 self._route_api_get(parts[1:], qs)
             else:
-                self._err("Risorsa inesistente", 404)
+                self._err("Resource not found", 404)
         except Exception as exc:
-            self._err(f"Errore interno: {exc}", 500)
+            self._err(f"Internal error: {exc}", 500)
 
     def do_POST(self) -> None:  # noqa: N802
         url = urlparse(self.path)
@@ -327,14 +327,14 @@ class Handler(BaseHTTPRequestHandler):
             if parts[:2] == ["api", "import"]:
                 payload = body.get("paths") or body.get("path") or ""
                 err = start_import(self.db_path, payload)
-                self._err(err, 409) if err else self._ok("avviato")
+                self._err(err, 409) if err else self._ok("started")
             elif parts[:2] == ["api", "sources"]:
                 action = parts[2] if len(parts) > 2 else "add"
                 if action == "add":
                     import datetime as _dt
                     path = str(body.get("path", "")).strip()
                     if not path:
-                        self._err("Percorso vuoto")
+                        self._err("Empty path")
                         return
                     p = Path(path).expanduser()
                     if not p.exists():
@@ -365,14 +365,14 @@ class Handler(BaseHTTPRequestHandler):
                             "SELECT id, path FROM sources ORDER BY id"
                         ).fetchall()
                     if not rows:
-                        self._err("Nessuna cartella da indicizzare")
+                        self._err("No folders to index")
                         return
                     err = start_import(
                         self.db_path, [r["path"] for r in rows],
                         source_ids=[r["id"] for r in rows])
-                    self._err(err, 409) if err else self._ok("avviato")
+                    self._err(err, 409) if err else self._ok("started")
                 else:
-                    self._err("Azione inesistente", 404)
+                    self._err("Unknown action", 404)
             elif parts[:2] == ["api", "keywords"]:
                 action = parts[2] if len(parts) > 2 else "save"
                 if action == "save":
@@ -380,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
                     name = str(body.get("name", "")).strip().lstrip("#")
                     terms = str(body.get("terms", "") or "").strip()
                     if not name or not terms:
-                        self._err("Servono nome e termini (uno per riga)")
+                        self._err("Name and terms required (one per line)")
                         return
                     conn = dbm.connect(self.db_path)
 
@@ -405,16 +405,16 @@ class Handler(BaseHTTPRequestHandler):
 
                     _write_retry(do_rm)
                     conn.commit()
-                    self._ok("rimossa")
+                    self._ok("removed")
                 else:
-                    self._err("Azione inesistente", 404)
+                    self._err("Unknown action", 404)
             elif parts[:2] == ["api", "concepts"]:
                 action = parts[2] if len(parts) > 2 else "save"
                 if action == "save":
                     import datetime as _dt
                     name = str(body.get("name", "")).strip()
                     if not name:
-                        self._err("Nome del concetto obbligatorio")
+                        self._err("Concept name required")
                         return
                     fields = {k: str(body.get(k, "") or "").strip()
                               for k in ("pos_text", "pos_docs", "pos_exts",
@@ -469,7 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                     conn.execute("DELETE FROM concepts WHERE id=?",
                                  (body.get("id"),))
                     conn.commit()
-                    self._ok("rimosso")
+                    self._ok("removed")
                 elif action == "add-doc":
                     conn = dbm.connect(self.db_path)
                     col = "pos_docs" if body.get("polarity") == "pos" \
@@ -478,13 +478,13 @@ class Handler(BaseHTTPRequestHandler):
                         "SELECT path FROM documents WHERE id=?",
                         (body.get("doc_id"),)).fetchone()
                     if not drow:
-                        self._err("Documento inesistente", 404)
+                        self._err("Document not found", 404)
                         return
                     crow = conn.execute(
                         "SELECT %s AS v FROM concepts WHERE id=?" % col,
                         (body.get("id"),)).fetchone()
                     if not crow:
-                        self._err("Concetto inesistente", 404)
+                        self._err("Concept not found", 404)
                         return
                     items = [t.strip() for t in
                              re.split(r"[;\n]+", crow["v"] or "") if t.strip()]
@@ -493,9 +493,9 @@ class Handler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE concepts SET %s=? WHERE id=?" % col,
                                  ("\n".join(items), body["id"]))
                     conn.commit()
-                    self._ok("aggiunto")
+                    self._ok("added")
                 else:
-                    self._err("Azione inesistente", 404)
+                    self._err("Unknown action", 404)
             elif parts[:2] == ["api", "presets"]:
                 names = body.get("names") or []
                 if isinstance(names, str):
@@ -510,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 _write_retry(do_write)
                 conn.commit()
-                self._ok("create")
+                self._ok("created")
             elif parts[:2] == ["api", "embed"]:
                 ok, msg = semanticm.embeddings_status()
                 if not ok:
@@ -518,19 +518,19 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     err = start_job("embed", self.db_path,
                                     _embed_then_cluster)
-                    self._err(err, 409) if err else self._ok("avviato")
+                    self._err(err, 409) if err else self._ok("started")
             elif parts[:2] == ["api", "cluster"]:
                 k = max(2, min(int(body.get("k", 40)), 200))
                 err = start_job("cluster", self.db_path,
                                 semanticm.cluster_documents, k=k)
-                self._err(err, 409) if err else self._ok("avviato")
+                self._err(err, 409) if err else self._ok("started")
             elif parts[:2] == ["api", "doc"] and len(parts) >= 3 \
                     and parts[2].isdigit():
                 self._route_api_post_doc(int(parts[2]), parts[3:], body)
             else:
-                self._err("Risorsa inesistente", 404)
+                self._err("Resource not found", 404)
         except Exception as exc:
-            self._err(f"Errore interno: {exc}", 500)
+            self._err(f"Internal error: {exc}", 500)
 
     # --- API GET --------------------------------------------------------------
 
@@ -539,11 +539,11 @@ class Handler(BaseHTTPRequestHandler):
         d = conn.execute("SELECT path FROM documents WHERE id=?",
                          (doc_id,)).fetchone()
         if not d:
-            self._err("Documento inesistente", 404)
+            self._err("Document not found", 404)
             return
         p = Path(d["path"])
         if not p.exists():
-            self._err("Il file non esiste più su disco", 410)
+            self._err("File no longer on disk", 410)
             return
         self._file(p, download)
 
@@ -561,7 +561,7 @@ class Handler(BaseHTTPRequestHandler):
             q = qs.get("q", [""])[0].strip()
             limit = min(int(qs.get("limit", ["60"])[0]), 300)
             if not q:
-                self._err("Query vuota")
+                self._err("Empty query")
                 return
             results = semanticm.gsearch(conn, q, limit=limit)
             tagmap = self._tags_of(conn, [r["id"] for r in results])
@@ -579,7 +579,7 @@ class Handler(BaseHTTPRequestHandler):
             q = qs.get("q", [""])[0].strip()
             limit = min(int(qs.get("limit", ["50"])[0]), 200)
             if not q:
-                self._err("Query vuota")
+                self._err("Empty query")
                 return
             results = semanticm.semantic_search(conn, q, limit=limit)
             tagmap = self._tags_of(conn, [r["id"] for r in results])
@@ -615,7 +615,7 @@ class Handler(BaseHTTPRequestHandler):
             c = conn.execute("SELECT * FROM concepts WHERE id=?",
                              (int(parts[2]),)).fetchone()
             if not c:
-                self._err("Concetto inesistente", 404)
+                self._err("Concept not found", 404)
                 return
             total, results = semanticm.concept_classify(conn, c, limit=300)
             self._ok({"concept": dict(c), "total": total,
@@ -659,13 +659,13 @@ class Handler(BaseHTTPRequestHandler):
         elif parts == ["import", "status"]:
             self._ok(dict(_import_state))
         else:
-            self._err("Risorsa API inesistente", 404)
+            self._err("Unknown API resource", 404)
 
     def _api_doc(self, conn, doc_id: int) -> None:
         d = conn.execute("SELECT * FROM documents WHERE id=?",
                          (doc_id,)).fetchone()
         if not d:
-            self._err("Documento inesistente", 404)
+            self._err("Document not found", 404)
             return
         doc = dict(d)
         doc["tags"] = [r["tag"] for r in conn.execute(
@@ -745,12 +745,12 @@ class Handler(BaseHTTPRequestHandler):
         conn = dbm.connect(self.db_path)
         if not conn.execute("SELECT 1 FROM documents WHERE id=?",
                             (doc_id,)).fetchone():
-            self._err("Documento inesistente", 404)
+            self._err("Document not found", 404)
             return
         if action == ["tag"]:
             tag = str(body.get("tag", "")).strip()
             if not tag:
-                self._err("Tag vuoto")
+                self._err("Empty tag")
                 return
             if body.get("action") == "remove":
                 conn.execute("DELETE FROM tags WHERE doc_id=? AND tag=?",
@@ -759,11 +759,11 @@ class Handler(BaseHTTPRequestHandler):
                 conn.execute("INSERT OR IGNORE INTO tags(tag, doc_id) "
                              "VALUES(?,?)", (tag, doc_id))
             conn.commit()
-            self._ok("fatto")
+            self._ok("done")
         elif action == ["group"]:
             name = str(body.get("group", "")).strip()
             if not name:
-                self._err("Nome gruppo vuoto")
+                self._err("Empty group name")
                 return
             g = conn.execute("SELECT id, query FROM groups WHERE name=?",
                              (name,)).fetchone()
@@ -772,7 +772,7 @@ class Handler(BaseHTTPRequestHandler):
                 g = conn.execute("SELECT id, query FROM groups WHERE name=?",
                                  (name,)).fetchone()
             if not g:
-                self._err(f"Gruppo inesistente: {name}", 404)
+                self._err(f"Group not found: {name}", 404)
                 return
             if g["query"]:
                 self._err("È un gruppo smart: i membri sono calcolati "
@@ -785,13 +785,13 @@ class Handler(BaseHTTPRequestHandler):
                 conn.execute("INSERT OR IGNORE INTO doc_groups(doc_id, "
                              "group_id) VALUES(?,?)", (doc_id, g["id"]))
             conn.commit()
-            self._ok("fatto")
+            self._ok("done")
         elif action == ["rm"]:
             conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
             conn.commit()
-            self._ok("fatto")
+            self._ok("done")
         else:
-            self._err("Azione inesistente", 404)
+            self._err("Unknown action", 404)
 
 
 # --- shell dell'applicazione (HTML+CSS+JS, nessuna dipendenza) -------------
@@ -799,7 +799,7 @@ class Handler(BaseHTTPRequestHandler):
 GAPP_SHELL = r"""<!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DocClassifier — ricerca documenti</title>
+<title>DocClassifier — document search</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;font:15px/1.5 -apple-system,'Segoe UI',Arial,sans-serif;
@@ -846,7 +846,7 @@ header a:hover{text-decoration:underline}
 .chip.minus{background:#fce8e6;border-color:#f6aea9;color:#a50e0e;
             font-weight:600;text-decoration:line-through}
 .chip .st{font-weight:800;margin-left:4px}
-/* ---- risultati ---- */
+/* ---- results ---- */
 #results{width:min(680px,92vw);margin:26px 0 40px}
 .res{margin-bottom:22px}
 .res .t{font-size:18px;color:#1a0dab;cursor:pointer;word-break:break-word;
@@ -887,50 +887,50 @@ header a:hover{text-decoration:underline}
 </style></head><body>
 
 <header>
-  <a href="#" onclick="openKw()">⚙ Parole chiave</a>
-  <a href="/classic">interfaccia completa →</a>
+  <a href="#" onclick="openKw()">⚙ Keywords</a>
+  <a href="/classic">full interface →</a>
 </header>
 
 <div class="logo"><span class="l1">D</span><span class="l2">o</span><span class="l3">c</span><span class="l4">C</span><span class="l5">l</span><span class="l6">a</span><span class="l7">s</span><span class="l8">s</span><span class="l9">i</span><span class="l10">f</span><span class="l11">i</span><span class="l12">e</span><span class="l1">r</span></div>
 
 <div class="sbox">
-  <input id="q" placeholder="mamma assicurazione  ·  mamma carciofi -pomodoro"
+  <input id="q" placeholder="mum insurance  ·  mum artichokes -tomato"
          autocomplete="off">
-  <button onclick="run()" title="cerca">🔍</button>
+  <button onclick="run()" title="search">🔍</button>
 </div>
-<div class="hint"><code>ricetta +#mamma +#carciofi -#pomodoro</code> —
-  il vettore da cercare è la SOMMA dei termini: segno − = allontana ·
-  <code>#nome</code> = parola chiave · pesi: <code>2*assicurazione</code></div>
+<div class="hint"><code>recipe +#mum +#artichokes -#tomato</code> —
+  the to-search vector is the SUM of the terms: sign − = push away ·
+  <code>#name</code> = keyword · weights: <code>2*insurance</code></div>
 
-<div id="fmtbar"><span class="flab">formati:</span><span id="fmt"></span></div>
+<div id="fmtbar"><span class="flab">formats:</span><span id="fmt"></span></div>
 
 <div id="chips"></div>
 <div id="results"></div>
 
 <div id="kmodal"><div class="box">
-  <h3 style="margin:0 0 10px">Parole chiave e categorie</h3>
-  <h4 class="sec" style="margin-top:0">📋 Categorie pronte all'uso</h4>
+  <h3 style="margin:0 0 10px">Keywords & categories</h3>
+  <h4 class="sec" style="margin-top:0">📋 Ready-made categories</h4>
   <div class="mini" style="color:#5f6368;font-size:13px;margin-bottom:8px">
-    Spunta le categorie della tua vita e creale in un colpo solo:
-    i loro tag compaiono cliccabili nella pagina di ricerca.</div>
+    Tick the life categories you need and create them in one go:
+    their tags appear as clickable chips on the search page.</div>
   <div id="presetlist"></div>
   <div style="display:flex;gap:8px;margin-top:10px">
-    <button onclick="addPresets()">Crea le selezionate</button>
+    <button onclick="addPresets()">Create selected</button>
   </div>
-  <h4 class="sec">Le tue parole chiave</h4>
+  <h4 class="sec">Your keywords</h4>
   <div class="mini" style="color:#5f6368;font-size:13px;margin-bottom:10px">
-    Una parola chiave è un <b>vettore composto</b>: frasi (peso 1),
-    pesi <code>1.5*"frase"</code>, riferimenti <code>1.0*#altra</code> e
-    <code>-1.0*#altra</code>, documenti campione
-    <code>0.5*"D:\percorso\file.pdf"</code> — una voce per riga.
-    Cercare <b>#nome</b> usa questo vettore.</div>
+    A keyword is a <b>composed vector</b>: phrases (weight 1),
+    weights <code>1.5*"phrase"</code>, references <code>1.0*#other</code> and
+    <code>-1.0*#other</code>, sample documents
+    <code>0.5*"D:\path\file.pdf"</code> — one entry per line.
+    Searching <b>#name</b> uses this vector.</div>
   <div id="klist"></div>
-  <h3 style="margin-top:16px;font-size:16px">Nuova parola chiave</h3>
-  <input id="kname" placeholder="nome, es. mamma" autocomplete="off">
-  <textarea id="kterms" placeholder="mamma&#10;mama&#10;1.0*&quot;madre&quot;&#10;0.5*&quot;D:\foto\mamma.jpg&quot;&#10;-0.5*#fratello"></textarea>
+  <h3 style="margin-top:16px;font-size:16px">New keyword</h3>
+  <input id="kname" placeholder="name, e.g. mum" autocomplete="off">
+  <textarea id="kterms" placeholder="mum&#10;mom&#10;1.0*&quot;mother&quot;&#10;0.5*&quot;D:\photos\mum.jpg&quot;&#10;-0.5*#brother"></textarea>
   <div style="display:flex;gap:8px;margin-top:8px">
-    <button onclick="saveKw()">Salva</button>
-    <button class="gray" onclick="hideKw()">Chiudi</button>
+    <button onclick="saveKw()">Save</button>
+    <button class="gray" onclick="hideKw()">Close</button>
   </div>
 </div></div>
 
@@ -949,9 +949,9 @@ async function loadStatus(){
     const t=new Date().toLocaleTimeString("it-IT",
       {hour:"2-digit",minute:"2-digit"});
     $("#status").innerHTML=
-      '📄 '+st.docs+' documenti · 🧮 '+st.embeddings+' embeddings'+
-      ' · aggiornato '+t+
-      (st.scanning?' · <span class="sc">⏳ scansione in corso</span>':'');
+      '📄 '+st.docs+' documents · 🧮 '+st.embeddings+' embeddings'+
+      ' · updated '+t+
+      (st.scanning?' · <span class="sc">⏳ scan in progress</span>':'');
   }catch(e){}
 }
 loadStatus();setInterval(loadStatus,10000);
@@ -988,7 +988,7 @@ function renderFmt(){
   }
   const all=document.createElement("span");
   all.className="fchip all"+(FMT.length?"":" on");
-  all.textContent="tutti";
+  all.textContent="all";
   all.title="nessun filtro di formato";
   all.onclick=()=>{FMT=[];saveFmt();renderFmt();run();};
   box.appendChild(all);
@@ -1010,17 +1010,17 @@ async function loadPresets(){
     nm.textContent="#"+p.name;row.appendChild(nm);
     const tm=document.createElement("span");tm.className="tm";
     tm.textContent=(p.terms||"").replace(/\n/g," · ")+
-      (p.exists?"  (già creata)":"");
+      (p.exists?"  (already created)":"");
     row.appendChild(tm);
     box.appendChild(row);
   }
 }
 async function addPresets(){
   const names=[...chosen];
-  if(!names.length){toast("Spunta almeno una categoria");return;}
+  if(!names.length){toast("Tick at least one category");return;}
   try{
     await post("/api/presets/add",{names});
-    toast("✔ Create "+names.length+" categorie: "+names.join(", "));
+    toast("✔ Created "+names.length+" categories: "+names.join(", "));
     chosen.clear();
     await loadKW();await loadPresets();
   }catch(e){toast("⚠ "+e.message,true);}
@@ -1073,7 +1073,7 @@ async function run(){
   paintChips();
   const box=$("#results");
   if(!q){box.innerHTML="";return;}
-  box.innerHTML='<div class="empty">Ricerca…</div>';
+  box.innerHTML='<div class="empty">Searching…</div>';
   try{
     const d=await api("/api/gsearch?q="+encodeURIComponent(q));
     let rows=d.results;
@@ -1090,7 +1090,7 @@ async function run(){
     const head=document.createElement("div");
     head.className="nres";
     head.textContent=(FMT.length?rows.length+" di "+d.results.length+" — ":"")+
-      d.n+" documenti (ordine: più vicini al vettore della ricerca)";
+      d.n+" documents (closest to the search vector first)";
     box.appendChild(head);
     for(const r of rows){
       const div=document.createElement("div");div.className="res";
@@ -1124,19 +1124,19 @@ async function loadKwList(){
     nm.textContent="#"+k.name;row.appendChild(nm);
     const tm=document.createElement("span");tm.className="tm";
     tm.textContent=(k.terms||"").replace(/\n/g," · ");row.appendChild(tm);
-    const rm=document.createElement("button");rm.textContent="Elimina";
+    const rm=document.createElement("button");rm.textContent="Delete";
     rm.onclick=async()=>{await post("/api/keywords/remove",{name:k.name});
-      toast("Parola chiave eliminata");await loadKW();await loadKwList();};
+      toast("Keyword deleted");await loadKW();await loadKwList();};
     row.appendChild(rm);box.appendChild(row);
   }
-  if(!KW.length)box.innerHTML='<div class="mini" style="color:#5f6368">— nessuna parola chiave —</div>';
+  if(!KW.length)box.innerHTML='<div class="mini" style="color:#5f6368">— no keywords yet —</div>';
 }
 async function saveKw(){
   const name=$("#kname").value.trim().replace(/^#/,"");
   const terms=$("#kterms").value.trim();
-  if(!name||!terms){toast("Servono nome e termini");return;}
+  if(!name||!terms){toast("Name and terms required");return;}
   try{await post("/api/keywords/save",{name,terms});
-    toast("Parola chiave #"+name+" salvata");
+    toast("Keyword #"+name+" saved");
     $("#kname").value="";$("#kterms").value="";
     await loadKW();await loadKwList();}
   catch(e){toast("⚠ "+e.message);}
@@ -1337,74 +1337,74 @@ h4.sec{margin:18px 0 6px;border-bottom:1px solid var(--line);
 <aside>
   <h1>📚 devon</h1>
   <div class="sub">archivio documentale</div>
-  <div class="item sel" data-view="cats">🏷 Categorie</div>
-  <div class="item" data-q="">Tutti i documenti <span class="n" id="n-all"></span></div>
-  <div class="item" data-view="dupes">♻ Duplicati <span class="n" id="n-dupes"></span></div>
-  <button class="btn" onclick="showSources()">📂 Cartelle e indice…</button>
-  <button class="btn" onclick="showAnalysis()">🧠 Analisi semantica…</button>
-  <button class="btn" onclick="showConcepts()">🏷️ Concetti…</button>
-  <h2>Tipi</h2><div id="kinds"></div>
-  <h2>Argomenti</h2><div id="topics"></div>
-  <h2>Concetti</h2><div id="concepts"></div>
-  <h2>Gruppi</h2><div id="groups"></div>
-  <h2>Tag</h2><div id="tags"></div>
+  <div class="item sel" data-view="cats">🏷 Categories</div>
+  <div class="item" data-q="">All documents <span class="n" id="n-all"></span></div>
+  <div class="item" data-view="dupes">♻ Duplicates <span class="n" id="n-dupes"></span></div>
+  <button class="btn" onclick="showSources()">📂 Folders & index…</button>
+  <button class="btn" onclick="showAnalysis()">🧠 Semantic analysis…</button>
+  <button class="btn" onclick="showConcepts()">🏷️ Concepts…</button>
+  <h2>Types</h2><div id="kinds"></div>
+  <h2>Topics</h2><div id="topics"></div>
+  <h2>Concepts</h2><div id="concepts"></div>
+  <h2>Groups</h2><div id="groups"></div>
+  <h2>Tags</h2><div id="tags"></div>
 </aside>
 
 <main>
   <div class="searchbar">
-    <input id="q" placeholder="Cerca… (consigl* tag:personale kind:pdf -bozza)"
+    <input id="q" placeholder="Search… (consigl* tag:personal kind:pdf -draft)"
            autofocus autocomplete="off">
-    <label class="sem" title="Cerca per significato, non solo per parola">
-      <input type="checkbox" id="sem"> semantica</label>
+    <label class="sem" title="Search by meaning, not just by word">
+      <input type="checkbox" id="sem"> semantic</label>
     <select id="csel" title="Classifica per concetto">
       <option value="">🏷️ concetto: tutti</option>
     </select>
     <div class="hint">tag: · kind: · ext: · path: · group: · topic: ·
       prefisso* · -escludi</div>
   </div>
-  <div id="scanstrip">⏳ Scansione in corso…</div>
+  <div id="scanstrip">⏳ Scan in progress…</div>
   <div id="list"></div>
 </main>
 
 <div id="detail"></div>
 
 <div id="modal"><div class="box wide">
-  <h3 style="margin-top:0">Cartelle e indice</h3>
-  <p class="mini" style="margin:4px 0 6px">Percorsi da indicizzare. «Aggiorna»
-  rileva i file <b>nuovi e modificati</b> (chi modifica un file lo
-  re-indicizza; i file immutati vengono saltati in un attimo). Rimuovere
-  una cartella NON cancella i documenti già indicizzati.</p>
+  <h3 style="margin-top:0">Folders & index</h3>
+  <p class="mini" style="margin:4px 0 6px">Paths to index. «Update»
+  detects <b>new and modified</b> files (a modified file is re-indexed;
+  unchanged files are skipped instantly). Removing a folder does NOT
+  delete the documents already indexed.</p>
   <div style="display:flex;gap:8px">
-    <input id="spath" type="text" placeholder="es. D:\Documenti"
+    <input id="spath" type="text" placeholder="e.g. D:\Documents"
            autocomplete="off" style="flex:1">
     <button class="btn" style="margin:0;width:auto" onclick="addSource()">
-      Aggiungi</button>
+      Add</button>
   </div>
   <div id="srclist"></div>
   <div style="display:flex;gap:8px;margin-top:10px">
     <button class="btn" style="margin:0" onclick="scanAllSources()">
-      ↻ Aggiorna tutto l'indice</button>
+      ↻ Update the whole index</button>
     <button style="background:#eef1f4;padding:8px 14px" onclick="hideModal()">
       Chiudi</button>
   </div>
   <div class="bar"><i id="ibar"></i></div>
-  <div class="mini" id="istatus">indice pronto</div>
+  <div class="mini" id="istatus">index ready</div>
 </div></div>
 
 <div id="amodal" class="modal2"><div class="box">
-  <h3 style="margin-top:0">Analisi semantica</h3>
+  <h3 style="margin-top:0">Semantic analysis</h3>
   <p class="mini" style="margin:4px 0 8px">Tutto il calcolo avviene in
   locale: nessun documento lascia il computer.</p>
   <div class="mini" id="astate"></div>
   <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
-    <button class="btn" style="margin:0" onclick="doEmbed()">Calcola embedding</button>
-    <button class="btn" style="margin:0" onclick="doCluster()">Raggruppa</button>
+    <button class="btn" style="margin:0" onclick="doEmbed()">Compute embeddings</button>
+    <button class="btn" style="margin:0" onclick="doCluster()">Cluster</button>
     <span class="mini">k =</span>
     <input id="ak" type="number" value="40" min="2" max="200"
            style="width:64px;padding:5px 7px;border:1px solid var(--line);
            border-radius:6px">
     <button style="background:#eef1f4;padding:8px 12px"
-            onclick="hideA()">Chiudi</button>
+            onclick="hideA()">Close</button>
   </div>
   <div class="bar"><i id="abar"></i></div>
   <div class="mini" id="astatus"></div>
@@ -1413,62 +1413,62 @@ h4.sec{margin:18px 0 6px;border-bottom:1px solid var(--line);
 
 <div id="cmodal" class="modal2"><div class="box wide">
   <div style="display:flex;align-items:center;gap:10px">
-    <h3 style="margin:8px 0">Categorie (concetti)</h3>
+    <h3 style="margin:8px 0">Categories (concepts)</h3>
     <button class="btn" style="margin:0;width:auto"
             onclick="newConceptForm()">＋ Nuova categoria</button>
   </div>
-  <p class="mini" style="margin:4px 0 8px">Un concetto classifica i
-  documenti per prossimità: l'ancoraggio <b>A</b> (parole/frasi, documenti
-  campione, tipi file) avvicina, l'ancoraggio <b>B</b> allontana. Ogni
-  documento XX ottiene punteggio = sim(XX,A) − sim(XX,B): chi supera la
-  soglia è classificato. Una riga <b>@Nome</b> richiama un altro concetto
-  o una categoria sem: (anche come negativo): il concetto diventa così
-  combinazione di categorie.</p>
+  <p class="mini" style="margin:4px 0 8px">A concept classifies
+  documents by proximity: anchor <b>A</b> (words/phrases, sample
+  documents, file types) pulls closer, anchor <b>B</b> pushes away. Every
+  document XX gets score = sim(XX,A) − sim(XX,B): whoever passes the
+  threshold is classified. A <b>@Name</b> line references another concept
+  or a sem: category (also as a negative): the concept thus becomes a
+  combination of categories.</p>
   <div id="clist"></div>
-  <h4 style="margin:14px 0 4px">Nuovo / modifica concetto</h4>
+  <h4 style="margin:14px 0 4px">New / edit concept</h4>
   <input id="cname" type="text" placeholder="nome, es. famiglia"
          autocomplete="off">
   <div class="cgrid">
-    <div><b class="mini">A · positivo</b>
+    <div><b class="mini">A · positive</b>
       <textarea id="cpostext" placeholder="parole o frasi, una per riga&#10;mamma&#10;fratello&#10;@AltroConcetto"></textarea>
-      <input id="cposdocs" type="text" placeholder="campioni positivi: percorso completo, es. D:\Documenti\lettera.docx"
+      <input id="cposdocs" type="text" placeholder="positive samples: full path, e.g. D:\Docs\letter.docx"
              autocomplete="off">
-      <input id="cposexts" type="text" placeholder="tipi: .docx .xlsx .doc .ppt .txt"
+      <input id="cposexts" type="text" placeholder="types: .docx .xlsx .doc .ppt .txt"
              autocomplete="off">
     </div>
-    <div><b class="mini">B · negativo</b>
+    <div><b class="mini">B · negative</b>
       <textarea id="cnegtext" placeholder="frasi o @Categoria da allontanare&#10;inferenza&#10;@Honda"></textarea>
-      <input id="cnegdocs" type="text" placeholder="campioni negativi: percorso completo, es. C:\Lavoro\report.py"
+      <input id="cnegdocs" type="text" placeholder="negative samples: full path, e.g. C:\Work\report.py"
              autocomplete="off">
-      <input id="cnegexts" type="text" placeholder="tipi: .c .py .sh"
+      <input id="cnegexts" type="text" placeholder="types: .c .py .sh"
              autocomplete="off">
     </div>
   </div>
   <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
-    <label class="sem" title="Con «solo questi tipi» i documenti di altre
-      estensioni vengono esclusi, non solo favoriti">
-      <input type="checkbox" id="cstrict"> tipi come filtro obbligatorio
+    <label class="sem" title="With «only these types» documents of other
+      extensions are excluded, not just favored">
+      <input type="checkbox" id="cstrict"> types as a strict filter
     </label>
-    <span class="mini">soglia</span>
+    <span class="mini">threshold</span>
     <input id="cthr" type="number" step="0.01" value="0.10"
            style="width:76px">
-    <button class="btn" style="margin:0" onclick="saveConcept()">Salva</button>
+    <button class="btn" style="margin:0" onclick="saveConcept()">Save</button>
     <button style="background:#eef1f4;padding:8px 12px" onclick="hideC()">
       Chiudi</button>
   </div>
 </div></div>
 
 <div id="qmodal" class="modal2"><div class="box">
-  <h3 style="margin-top:0">Aggiungi a un concetto</h3>
+  <h3 style="margin-top:0">Add to a concept</h3>
   <div class="mini" id="qdoc"></div>
   <select id="qconcept" style="width:100%;padding:8px;margin:8px 0;font-size:14px"></select>
   <div style="display:flex;gap:8px">
     <button class="btn" style="margin:0" onclick="quickAdd('pos')">
-      Positivo (A)</button>
+      Positive (A)</button>
     <button class="btn" style="margin:0;background:#f7e4e4;color:var(--red)"
-            onclick="quickAdd('neg')">Negativo (B)</button>
+            onclick="quickAdd('neg')">Negative (B)</button>
     <button style="background:#eef1f4;padding:8px 12px"
-            onclick="hideQ()">Annulla</button>
+            onclick="hideQ()">Cancel</button>
   </div>
 </div></div>
 
@@ -1500,8 +1500,8 @@ function onSearch(){
   clearTimeout(debounce);
   debounce=setTimeout(async()=>{
     state.q=$("#q").value.trim();
-    // dentro una categoria la barra filtra i RISULTATI della categoria:
-    // kind:/ext: scelgono la tipologia, il resto filtra per parola chiave
+    // inside a category the top bar filters the category results:
+    // kind:/ext: pick the type, the rest filters by keyword
     if(state.view==="concept"){
       const cf=state.cf||{};
       const rest=[];
@@ -1529,9 +1529,9 @@ async function loadList(){
     const ct=setInterval(()=>{
       const el2=document.getElementById("cload");
       if(!el2){clearInterval(ct);return;}
-      el2.textContent="Classificazione in corso… "+
+      el2.textContent="Classifying… "+
         Math.round((Date.now()-t0)/1000)+"s"+
-        " (se è la prima dopo l'avvio, sto caricando i vettori)";
+        " (first run after startup: loading the vectors)";
     },1000);
     try{
       const d=await api("/api/concept/get/"+state.conceptId);
@@ -1542,18 +1542,18 @@ async function loadList(){
     return;}
   const sem=$("#sem").checked;
   if(sem&&!state.q.trim()){
-    box.innerHTML='<div class="empty">Scrivi una frase intera: la ricerca '+
-      'semantica la confronta con il <b>significato</b> dei documenti.</div>';
+    box.innerHTML='<div class="empty">Type a whole sentence: semantic '+
+      'search compares its <b>meaning</b> with the documents.</div>';
     return;}
-  box.innerHTML='<div class="empty">Ricerca in corso…</div>';
+  box.innerHTML='<div class="empty">Searching…</div>';
   try{
     const url=sem?"/api/semantic?q="+encodeURIComponent(state.q)
                  :"/api/search?q="+encodeURIComponent(state.q);
     const docs=await api(url);
-    if(!docs.length){box.innerHTML='<div class="empty">Nessun documento.'+
-      (state.q?" Prova con altre parole, un prefisso (es. consigl*) o la "+
-      "ricerca semantica.":" Importa una cartella con il pulsante nella "+
-      "barra laterale.")+'</div>';}
+    if(!docs.length){box.innerHTML='<div class="empty">No documents.'+
+      (state.q?" Try other words, a prefix (e.g. consigl*), or "+
+      "the semantic search.":" Import a folder with the button in the "+
+      "sidebar.")+'</div>';}
     box.innerHTML="";
     for(const d of docs)box.appendChild(card(d));
   }catch(e){box.innerHTML="";toast("⚠ "+e.message);}
@@ -1593,8 +1593,8 @@ function card(d){
     tw.appendChild(tag);
   }
   if(state.view!=="dupes"&&(state.concepts||[]).length){
-    const qb=el("button","qtag","🏷 concetto…");
-    qb.title="aggiungi questo documento a un concetto come esempio A o B";
+    const qb=el("button","qtag","🏷 concept…");
+    qb.title="add this document to a concept as sample A or B";
     qb.onclick=e=>{e.stopPropagation();quickConcept(d.id,d.title);};
     tw.appendChild(qb);
   }
@@ -1624,22 +1624,22 @@ function renderDetail(){
   box.appendChild(el("h2",null,d.title||d.filename));
 
   const act=el("div","actions");
-  const open=el("a","open",d.exists?"Apri file ↗":"File mancante");
+  const open=el("a","open",d.exists?"Open file ↗":"File missing");
   open.href=d.exists?"/file/"+d.id:"#";open.target="_blank";
   if(!d.exists){open.className="mini";open.onclick=e=>e.preventDefault();}
   act.appendChild(open);
-  const dl=el("a",null,"Scarica");dl.href="/file/"+d.id+"?download=1";
+  const dl=el("a",null,"Download");dl.href="/file/"+d.id+"?download=1";
   dl.target="_blank";dl.rel="noopener";
   dl.className="mini";dl.style.alignSelf="center";act.appendChild(dl);
-  const rm=el("button","danger","Rimuovi dall'indice");
+  const rm=el("button","danger","Remove from index");
   rm.onclick=()=>removeDoc(d.id);act.appendChild(rm);
   box.appendChild(act);
 
   const dl2=el("dl");
-  const rows=[["tipo",`${d.kind} (${d.ext})`],["dimensione",fmtSize(d.size)],
-    ["data file",d.date||"—"],["autore",d.author||"—"],
-    ["argomento",d.topic||"—"],
-    ["indicizzato",d.added||"—"],["percorso",d.path]];
+  const rows=[["type",`${d.kind} (${d.ext})`],["size",fmtSize(d.size)],
+    ["file date",d.date||"—"],["author",d.author||"—"],
+    ["topic",d.topic||"—"],
+    ["indexed",d.added||"—"],["path",d.path]];
   for(const[k,v]of rows){dl2.appendChild(el("dt",null,k));
     dl2.appendChild(el("dd",null,v));}
   box.appendChild(dl2);
@@ -1675,23 +1675,23 @@ function renderDetail(){
   box.appendChild(gl);
   const gr=el("div","editrow");
   const gs=el("select");
-  gs.appendChild(new Option("— scegli gruppo —",""));
+  gs.appendChild(new Option("— choose group —",""));
   const used=new Set(d.groups.map(g=>g.name));
   for(const g of state.groups)
     if(!g.query&&!used.has(g.name))gs.appendChild(new Option(g.name,g.name));
-  gs.appendChild(new Option("➕ crea nuovo…","__new__"));
+  gs.appendChild(new Option("➕ create new…","__new__"));
   const gb=el("button",null,"Aggiungi");
   gb.onclick=()=>{
     if(gs.value==="__new__")setGroup($("#ngroup").value.trim(),"add",true);
     else if(gs.value)setGroup(gs.value,"add");};
   gr.append(gs,gb);box.appendChild(gr);
   const gr2=el("div","editrow");gr2.id="newgrouprow";gr2.style.display="none";
-  const gi=el("input");gi.id="ngroup";gi.placeholder="nome nuovo gruppo…";
+  const gi=el("input");gi.id="ngroup";gi.placeholder="new group name…";
   gr2.appendChild(gi);box.appendChild(gr2);
   gs.onchange=()=>{gr2.style.display=gs.value==="__new__"?"flex":"none";};
 
   if((d.group_suggestions||[]).length){
-    box.appendChild(el("h4","sec","Gruppi suggeriti (per contenuto)"));
+    box.appendChild(el("h4","sec","Suggested groups (by content)"));
     const sl=el("div","chipline");
     for(const s of d.group_suggestions){
       const c=el("span","tag",
@@ -1704,17 +1704,17 @@ function renderDetail(){
   }
 
   if((state.concepts||[]).length){
-    box.appendChild(el("h4","sec","Concetti: usa come esempio"));
+    box.appendChild(el("h4","sec","Concepts: use as sample"));
     const r=el("div","editrow");
     const cs=el("select");
-    cs.appendChild(new Option("— scegli concetto —",""));
+    cs.appendChild(new Option("— choose concept —",""));
     for(const cpt of state.concepts)
       cs.appendChild(new Option(cpt.name,cpt.id));
     const ba=el("button",null,"A +");
-    ba.title="aggiungi questo documento all'ancoraggio positivo";
+    ba.title="add this document to the positive anchor of the concept";
     ba.onclick=()=>cs.value&&addSampleDoc(cs.value,"pos");
     const bb=el("button",null,"B −");
-    bb.title="aggiungi questo documento all'ancoraggio negativo";
+    bb.title="add this document to the negative anchor of the concept";
     bb.onclick=()=>cs.value&&addSampleDoc(cs.value,"neg");
     r.append(cs,ba,bb);box.appendChild(r);
   }
@@ -1723,11 +1723,11 @@ function renderDetail(){
     box.appendChild(el("h4","sec","Testo"));
     const pre=el("pre","text",d.text.slice(0,12000));
     box.appendChild(pre);
-  }else box.appendChild(el("p","mini","Nessun testo estraibile (solo metadati)."));
+  }else box.appendChild(el("p","mini","No extractable text (metadata only)."));
 
   if(d.similar&&d.similar.length){
     box.appendChild(el("h4","sec",d.similar_semantic
-      ?"Documenti simili (semantici)":"Documenti simili (per parole)"));
+      ?"Similar documents (semantic)":"Similar documents (by words)"));
     for(const s of d.similar){
       const row=el("div","sim");
       row.appendChild(el("span","sc",s.score.toFixed(2)));
@@ -1743,23 +1743,23 @@ function closeDetail(){state.selId=null;state.doc=null;
 
 async function setTag(tag,action){
   try{await post(`/api/doc/${state.selId}/tag`,{tag,action});
-    toast(action==="add"?"Tag aggiunto: "+tag:"Tag rimosso: "+tag);
+    toast(action==="add"?"Tag added: "+tag:"Tag removed: "+tag);
     await selectDoc(state.selId);await loadSidebar();await loadList();}
   catch(e){toast("⚠ "+e.message);}
 }
 
 async function setGroup(name,action,create){
   try{await post(`/api/doc/${state.selId}/group`,{group:name,action,create});
-    toast("Gruppo aggiornato.");await loadSidebar();
+    toast("Group updated.");await loadSidebar();
     await selectDoc(state.selId);}
   catch(e){toast("⚠ "+e.message);}
 }
 
 async function removeDoc(id){
   if(!confirm("Rimuovere il documento dall'indice?\n"+
-    "(il file su disco NON viene toccato)"))return;
+    "(the file on disk is NOT touched)"))return;
   try{await post(`/api/doc/${id}/rm`,{});
-    toast("Rimosso dall'indice.");closeDetail();await loadList();
+    toast("Removed from index.");closeDetail();await loadList();
     await loadSidebar();}
   catch(e){toast("⚠ "+e.message);}
 }
@@ -1769,25 +1769,25 @@ function renderConceptList(){
   const d=state.conceptData,c=d.concept;
   box.innerHTML="";
   const head=el("div","card");head.style.cursor="default";
-  head.appendChild(el("h3",null,"Concetto: "+c.name));
+  head.appendChild(el("h3",null,"Concept: "+c.name));
   head.appendChild(el("div","meta",
-    d.total+" documenti classificati"+
-    (c.ext_mode==="solo"?" · SOLO tipi "+c.pos_exts:"")));
-  head.appendChild(el("div","meta","A-parole: "+
+    d.total+" documents classified"+
+    (c.ext_mode==="solo"?" · ONLY types "+c.pos_exts:"")));
+  head.appendChild(el("div","meta","A-words: "+
     (c.pos_text||"—").replace(/\n/g,"; ")+
-    (c.pos_docs?"  · A-documenti: "+c.pos_docs:"")+
-    (c.pos_exts?"  · tipi "+c.pos_exts:"")));
+    (c.pos_docs?"  · A-documents: "+c.pos_docs:"")+
+    (c.pos_exts?"  · types "+c.pos_exts:"")));
   if(c.neg_text||c.neg_docs||c.neg_exts)
     head.appendChild(el("div","meta","B: "+
       (c.neg_text||"—").replace(/\n/g,"; ")+
       (c.neg_docs?"  + campioni":"")+
       (c.neg_exts?"  ["+c.neg_exts+"]":"")));
   const thr=el("div","editrow");
-  thr.appendChild(el("span","mini","soglia:"));
+  thr.appendChild(el("span","mini","threshold:"));
   const ti=el("input");ti.type="number";ti.step="0.01";
   ti.value=c.threshold;ti.style.maxWidth="90px";
-  const ab=el("button",null,"Applica soglia");
-  ab.title="salva la nuova soglia e riclassifica subito";
+  const ab=el("button",null,"Apply threshold");
+  ab.title="salva la nuova threshold e riclassifica subito";
   ab.onclick=e=>{e.stopPropagation();
     applyThreshold(parseFloat(ti.value));};
   thr.append(ti,ab);
@@ -1796,12 +1796,12 @@ function renderConceptList(){
 
   const kinds=[...new Set(d.results.map(r=>r.kind))].sort();
   const bar=el("div","cfilters");
-  const qi=el("input");qi.placeholder="filtra i risultati per parola chiave "+
-    "(titolo, nome, percorso)…";qi.value=(state.cf||{}).q||"";
+  const qi=el("input");qi.placeholder="filter results by keyword "+
+    "(title, name, path)…";qi.value=(state.cf||{}).q||"";
   qi.oninput=()=>{state.cf=state.cf||{};state.cf.q=qi.value.toLowerCase();
     drawConceptResults();};
   const ks=el("select");
-  ks.appendChild(new Option("tutte le tipologie",""));
+  ks.appendChild(new Option("all types",""));
   for(const k of kinds)ks.appendChild(new Option(k,k));
   ks.value=(state.cf||{}).type||"";
   ks.onchange=()=>{state.cf=state.cf||{};state.cf.type=ks.value;
@@ -1821,21 +1821,21 @@ function drawConceptResults(){
     (!q||(r.title+" "+r.path+" "+r.filename).toLowerCase().includes(q)));
   res.innerHTML="";
   res.appendChild(el("div","mini",rows.length+" di "+
-    state.conceptData.results.length+" risultati"));
+    state.conceptData.results.length+" of results"));
   if(!rows.length)res.appendChild(el("div","empty",
-    "Nessun documento supera la soglia"+((q||ft)?" con questi filtri":"")+
-    ": aggiungi parole o documenti campione, o abbassa la soglia."));
+    "No document passes the threshold"+((q||ft)?" with these filters":"")+
+    ": add words or sample documents, or lower the threshold."));
   for(const r of rows){
     const c=card(r);
     const acts=el("div","acts");
-    acts.appendChild(el("span","mini","esempio:"));
-    const ba=el("button","pos","A + positivo");
-    ba.title="aggiungi all'ancoraggio positivo del concetto e riclassifica";
+    acts.appendChild(el("span","mini","sample:"));
+    const ba=el("button","pos","A + positive");
+    ba.title="add to the positive anchor of the concept and reclassify";
     ba.onclick=e=>{e.stopPropagation();
       addSampleDoc(state.conceptId,"pos",r.id).then(()=>loadList());};
     acts.appendChild(ba);
-    const bb=el("button","neg","B − negativo");
-    bb.title="aggiungi all'ancoraggio negativo del concetto e riclassifica";
+    const bb=el("button","neg","B − negative");
+    bb.title="add to the negative anchor of the concept and reclassify";
     bb.onclick=e=>{e.stopPropagation();
       addSampleDoc(state.conceptId,"neg",r.id).then(()=>loadList());};
     acts.appendChild(bb);
@@ -1848,26 +1848,26 @@ function drawConceptResults(){
 async function openCats(){
   state.view="cats";markSidebar();closeDetail();
   const box=$("#list");
-  box.innerHTML='<div class="empty">Carico le categorie…</div>';
+  box.innerHTML='<div class="empty">Loading categories…</div>';
   try{
     const[cs,tp,gp,stats]=await Promise.all([
       api("/api/concepts"),api("/api/topics"),api("/api/groups"),
       api("/api/stats")]);
     box.innerHTML="";
     const head=el("div","card");head.style.cursor="default";
-    head.appendChild(el("h3",null,"Categorizza il tuo archivio"));
+    head.appendChild(el("h3",null,"Categorize your archive"));
     head.appendChild(el("div","meta",
-      "Una categoria (concetto) raggruppa i documenti per significato: "+
-      "ancoraggio A = parole/frasi, documenti campione (per percorso) e "+
-      "tipi di file da avvicinare; B = quelli da allontanare. Con @Nome "+
-      "combinii più categorie. Documenti in archivio: "+stats.docs+"."));
-    const nb=el("button","btn","+ Nuova categoria");
+      "A category (concept) groups documents by meaning: "+
+      "anchor A = words/phrases, sample documents (by path) and file "+
+      "types to pull closer; B = the ones to push away. With @Name you "+
+      "combine categories. Documents in archive: "+stats.docs+"."));
+    const nb=el("button","btn","+ New category");
     nb.style.width="auto";nb.style.marginTop="10px";
     nb.onclick=()=>{showConcepts();};
     head.appendChild(nb);
     box.appendChild(head);
 
-    box.appendChild(el("h4","sec","Le tue categorie"));
+    box.appendChild(el("h4","sec","Your categories"));
     if(!cs.length){
       const e1=el("div","empty",
         "Non hai ancora categorie. Esempio: crea «famiglia» con parole "+
@@ -1876,7 +1876,7 @@ async function openCats(){
     for(const c of cs){
       const cd=el("div","card");cd.style.cursor="default";
       cd.appendChild(el("h3",null,c.name+"  —  "+
-        (c.members==null?"apri per calcolare":c.members+" documenti")));
+        (c.members==null?"open to compute":c.members+" documents")));
       cd.appendChild(el("div","meta","A: "+
         (c.pos_text||"—").replace(/\n/g,"; ")+
         (c.pos_docs?"  + campioni":"")+
@@ -1887,13 +1887,13 @@ async function openCats(){
           (c.neg_docs?"  + campioni":"")+
           (c.neg_exts?"  ["+c.neg_exts+"]":"")));
       const acts=el("div","acts");
-      const v=el("button","pos","Vedi classificazione");
+      const v=el("button","pos","View classification");
       v.onclick=e=>{e.stopPropagation();openConcept(c.id);};
       acts.appendChild(v);
       const ed=el("button",null,"Modifica");
       ed.onclick=e=>{e.stopPropagation();showConcepts();editConcept(c);};
       acts.appendChild(ed);
-      const rm=el("button",null,"Elimina");
+      const rm=el("button",null,"Delete");
       rm.onclick=e=>{e.stopPropagation();
         removeConcept(c.id).then(()=>openCats());};
       acts.appendChild(rm);
@@ -1901,10 +1901,10 @@ async function openCats(){
       box.appendChild(cd);
     }
 
-    box.appendChild(el("h4","sec","Argomenti automatici (dal contenuto)"));
+    box.appendChild(el("h4","sec","Automatic topics (from content)"));
     const tc=el("div","chipline");
     if(!tp.length)tc.appendChild(el("span","mini",
-      "— usa «Analisi semantica → Raggruppa» per crearli —"));
+      "— use «Semantic analysis → Cluster» to create them —"));
     for(const t of tp){
       const tag=el("span","tag",t.topic+" ("+t.n+")");
       tag.onclick=()=>{$("#q").value='topic:"'+t.topic+'"';onSearch();};
@@ -1912,11 +1912,11 @@ async function openCats(){
     }
     box.appendChild(tc);
 
-    box.appendChild(el("h4","sec","Categorie semantiche (gruppi ⚡)"));
+    box.appendChild(el("h4","sec","Semantic categories (⚡ groups)"));
     const gc=el("div","chipline");
     const semg=(gp||[]).filter(g=>g.query);
     if(!semg.length)gc.appendChild(el("span","mini",
-      "— nessuna: sono gruppi smart con query sem:… —"));
+      "— none: smart groups with sem:… queries —"));
     for(const g of semg){
       const tag=el("span","tag","⚡ "+g.name);
       tag.onclick=()=>{state.view="list";$("#sem").checked=true;
@@ -1928,14 +1928,14 @@ async function openCats(){
 }
 
 async function applyThreshold(v){
-  if(isNaN(v)){toast("Soglia non valida");return;}
+  if(isNaN(v)){toast("Invalid threshold");return;}
   const c=state.conceptData.concept;
   try{
     await post("/api/concepts/save",{id:c.id,name:c.name,
       pos_text:c.pos_text,pos_docs:c.pos_docs,pos_exts:c.pos_exts,
       neg_text:c.neg_text,neg_docs:c.neg_docs,neg_exts:c.neg_exts,
       ext_mode:c.ext_mode,threshold:v});
-    toast("✔ soglia "+v.toFixed(2)+" salvata · riclassifico…");
+    toast("✔ threshold "+v.toFixed(2)+" saved · reclassifying…");
     await loadList();
     await loadSidebar();
   }catch(e){toast("⚠ "+e.message,true);}
@@ -1943,14 +1943,14 @@ async function applyThreshold(v){
 
 /* ---- duplicati ---- */
 async function loadDupes(){
-  const box=$("#list");box.innerHTML='<div class="empty">Calcolo…</div>';
+  const box=$("#list");box.innerHTML='<div class="empty">Computing…</div>';
   try{
     const groups=await api("/api/dupes");
     box.innerHTML="";
-    if(!groups.length)box.appendChild(el("div","empty","Nessun duplicato 🎉"));
+    if(!groups.length)box.appendChild(el("div","empty","No duplicates 🎉"));
     for(const g of groups){
       const c=el("div","card");c.style.cursor="default";
-      c.appendChild(el("h3",null,`${g.title} — ${g.n} copie`));
+      c.appendChild(el("h3",null,`${g.title} — ${g.n} copies`));
       for(const dd of g.docs){
         const p=el("div","path",`[${dd.id}] ${dd.path}`);
         p.style.cursor="pointer";p.onclick=()=>selectDoc(dd.id);
@@ -1987,7 +1987,7 @@ async function loadSidebar(){
     }
     state.groups=await api("/api/groups");
     const gb=$("#groups");gb.innerHTML="";
-    if(!state.groups.length)gb.appendChild(el("div","mini","— nessuno —"));
+    if(!state.groups.length)gb.appendChild(el("div","mini","— none —"));
     for(const g of state.groups){
       const i=el("div","item",(g.query?"⚡ ":"")+g.name);
       if(!g.query)i.appendChild(el("span","n",g.n));
@@ -2004,7 +2004,7 @@ async function loadSidebar(){
     const topics=await api("/api/topics");
     const tb=$("#topics");tb.innerHTML="";
     if(!topics.length)
-      tb.appendChild(el("div","mini","— usa «Analisi semantica» —"));
+      tb.appendChild(el("div","mini","— use «Semantic analysis» —"));
     for(const t of topics.slice(0,25)){
       const i=el("div","item",t.topic);
       i.appendChild(el("span","n",t.n));
@@ -2015,7 +2015,7 @@ async function loadSidebar(){
     state.concepts=await api("/api/concepts");
     const cb=$("#concepts");cb.innerHTML="";
     if(!state.concepts.length)
-      cb.appendChild(el("div","mini","— creali con «Concetti…» —"));
+      cb.appendChild(el("div","mini","— create them with «Concepts…» —"));
     for(const cpt of state.concepts){
       const i=el("div","item",cpt.name);
       if(cpt.members!=null)i.appendChild(el("span","n",cpt.members));
@@ -2031,7 +2031,7 @@ async function loadSidebar(){
         (cpt.members!=null?" ("+cpt.members+")":""),cpt.id));
     if(cur&&[...csel.options].some(o=>o.value===cur))csel.value=cur;
     const tg=$("#tags");tg.innerHTML="";
-    if(!stats.tags.length)tg.appendChild(el("div","mini","— nessuno —"));
+    if(!stats.tags.length)tg.appendChild(el("div","mini","— none —"));
     for(const t of stats.tags){
       const i=el("div","item",t.tag);
       i.appendChild(el("span","n",t.n));
@@ -2055,7 +2055,7 @@ async function loadSources(){
     box.innerHTML="";
     if(!srcs.length){
       box.innerHTML='<div class="mini" style="padding:8px 0">Nessuna '+
-        'cartella: aggiungi un percorso (es. D:\\Documenti).</div>';
+        'folder: add a path (e.g. D:\\Documents).</div>';
       return;}
     for(const s of srcs){
       const row=el("div","srcrow");
@@ -2063,49 +2063,49 @@ async function loadSources(){
       p.appendChild(document.createTextNode(s.path));
       const busy=running&&root.startsWith(s.path.toLowerCase());
       const meta=el("small",null,
-        `${s.docs} documenti · ultima scansione: `+
-        (busy?"⏳ SCANSIONE IN CORSO…":
+        `${s.docs} documents · last scan: `+
+        (busy?"⏳ SCAN IN PROGRESS…":
          (s.last_scan?s.last_scan.replace("T"," "):"mai"))+
-        (s.exists?"":" · PERCORSO INESISTENTE"));
+        (s.exists?"":" · PATH NOT FOUND"));
       p.appendChild(meta);row.appendChild(p);
-      const up=el("button","upd",busy?"In corso…":"Aggiorna");
+      const up=el("button","upd",busy?"Running…":"Update");
       if(busy)up.disabled=true;
       else up.onclick=()=>scanSource(s.id);
       row.appendChild(up);
       const rm=el("button",null,"Rimuovi");
-      rm.title="toglie dalla lista; i documenti restano nell'indice";
+      rm.title="removes from the list; indexed documents stay";
       rm.onclick=()=>removeSource(s.id);row.appendChild(rm);
       box.appendChild(row);}
   }catch(e){
-    box.innerHTML='<div class="mini" style="padding:8px 0">⚠ impossibile '+
-      "caricare l'elenco delle cartelle: "+e.message+'</div>';}
+    box.innerHTML='<div class="mini" style="padding:8px 0">⚠ cannot '+
+      "load the folder list: "+e.message+'</div>';}
 }
 
 async function addSource(){
   const p=$("#spath").value.trim();
-  if(!p){toast("Scrivi un percorso");return;}
+  if(!p){toast("Type a path");return;}
   try{await post("/api/sources/add",{path:p});
-    $("#spath").value="";toast("Cartella aggiunta: "+p);
+    $("#spath").value="";toast("Folder added: "+p);
     await loadSources();}
   catch(e){toast("⚠ "+e.message);}
 }
 
 async function removeSource(id){
   try{await post("/api/sources/remove",{id});
-    toast("Cartella rimossa dalla lista (i documenti restano)");
+    toast("Folder removed from the list (documents stay)");
     await loadSources();}
   catch(e){toast("⚠ "+e.message);}
 }
 
 async function scanSource(id){
   try{await post("/api/sources/scan",{id});
-    toast("Aggiornamento avviato");importOwned=true;pollImport();}
+    toast("Update started");importOwned=true;pollImport();}
   catch(e){toast("⚠ "+e.message);}
 }
 
 async function scanAllSources(){
   try{await post("/api/sources/scan",{});
-    toast("Aggiornamento di tutte le cartelle avviato");
+    toast("Updating all folders");
     importOwned=true;pollImport();}
   catch(e){toast("⚠ "+e.message);}
 }
@@ -2121,8 +2121,8 @@ function pollImport(){
       const s=st.stats||{};
       if(st.running){
         $("#istatus").textContent=
-          `scansione ${s.radice||st.path||""} · visti ${s.visti||0} · `+
-          `nuovi ${s.nuovi||0} · aggiornati ${s.aggiornati||0} · `+
+          `scan ${s.radice||st.path||""} · seen ${s.visti||0} · `+
+          `new ${s.nuovi||0} · updated ${s.aggiornati||0} · `+
           `duplicati ${s.doppioni||0}`+
           (st.error?" · ERRORE: "+st.error:"");
         $("#ibar").style.width=(8+Math.min(80,(s.visti||0)%100))+"%";
@@ -2130,16 +2130,16 @@ function pollImport(){
       clearInterval(poller);
       $("#ibar").style.width="100%";
       $("#istatus").textContent=
-        `aggiornato: nuovi ${s.nuovi||0} · file modificati `+
-        `${s.aggiornati||0} · duplicati ${s.doppioni||0}`;
+        `updated: new ${s.nuovi||0} · modified files `+
+        `${s.aggiornati||0} · duplicates ${s.doppioni||0}`;
       await loadSidebar();
       if(state.view==="list"&&!state.q)await loadList();
       if($("#modal").classList.contains("on"))await loadSources();
       if(importOwned){
         importOwned=false;
         toast(st.error?"⚠ Import interrotto: "+st.error
-             :"✔ Indice aggiornato: "+(s.nuovi||0)+" nuovi, "+
-              (s.aggiornati||0)+" modificati");}
+             :"✔ Index updated: "+(s.nuovi||0)+" nuovi, "+
+              (s.aggiornati||0)+" updated");}
     }catch(e){clearInterval(poller);}
   },1200);
 }
@@ -2155,7 +2155,7 @@ async function doEmbed(){
 }
 async function doCluster(){
   try{await post("/api/cluster",{k:parseInt($("#ak").value)||40});
-    toast("Raggruppamento avviato");notifiedCluster=false;pollJobs();}
+    toast("Clustering started");notifiedCluster=false;pollJobs();}
   catch(e){toast("⚠ "+e.message);}
 }
 
@@ -2166,25 +2166,24 @@ function pollJobs(){
     try{
       const[em,cl]=await Promise.all([api("/api/job/embed"),
                                       api("/api/job/cluster")]);
-      $("#astate").textContent="Embedding in archivio: "+em.embeddings;
+      $("#astate").textContent="Embeddings stored: "+em.embeddings;
       const es=em.stats,cs=cl.stats,txt=[];
       let pct=0;
       if(em.running&&es){txt.push(`embedding ${es.done}/${es.total||"…"}`);
         pct=Math.min(50,(es.done/(es.total||1))*50);}
-      if(cl.running&&cs){txt.push(`raggruppamento: ${cs.fase}`);
+      if(cl.running&&cs){txt.push(`clustering: ${cs.fase}`);
         pct=Math.max(pct,50+Math.min(50,cs.done/(cs.total||1)*50));}
       if(!em.running&&es&&es.fatto&&!notifiedEmbed){
         notifiedEmbed=true;
         if(es.errore)toast("⚠ embedding: "+es.errore);
-        else{toast("✔ Embedding pronti: "+es.done+" documenti");
-          $("#anote").textContent="Ora la ricerca semantica usa gli "+
-            "embedding; puoi anche rilanciare il raggruppamento.";}}
+        else{toast("✔ Embeddings ready: "+es.done+" documents");
+          $("#anote").textContent="Semantic search now uses embeddings; you can also rerun clustering.";}}
       if(!cl.running&&cs&&cs.fatto&&!notifiedCluster){
         notifiedCluster=true;
-        if(cs.errore)toast("⚠ raggruppamento: "+cs.errore);
-        else if(cs.cluster)toast("✔ Creati "+cs.cluster+" argomenti");}
+        if(cs.errore)toast("⚠ clustering: "+cs.errore);
+        else if(cs.cluster)toast("✔ Created "+cs.cluster+" topics");}
       if(es&&es.errore)txt.push("embedding: "+es.errore);
-      if(cs&&cs.errore)txt.push("raggruppamento: "+cs.errore);
+      if(cs&&cs.errore)txt.push("clustering: "+cs.errore);
       $("#astatus").textContent=txt.join(" · ")||"pronto";
       if(!em.running&&!cl.running&&(es&&es.done||cs&&cs.cluster)){
         pct=100;await loadSidebar();}
@@ -2218,7 +2217,7 @@ async function loadConceptsList(){
       const p=el("div","p");
       p.appendChild(document.createTextNode(c.name));
       p.appendChild(el("small",null,
-        (c.members==null?"?":c.members)+" documenti classificati · soglia "+
+        (c.members==null?"?":c.members)+" documents classified · threshold "+
         Number(c.threshold).toFixed(2)));
       row.appendChild(p);
       const open=el("button","upd","Vedi");open.onclick=()=>{
@@ -2226,7 +2225,7 @@ async function loadConceptsList(){
       row.appendChild(open);
       const ed=el("button",null,"Modifica");
       ed.onclick=()=>editConcept(c);row.appendChild(ed);
-      const rm=el("button",null,"Elimina");
+      const rm=el("button",null,"Delete");
       rm.onclick=()=>removeConcept(c.id);row.appendChild(rm);
       box.appendChild(row);}
   }catch(e){box.innerHTML='<div class="mini">⚠ '+e.message+'</div>';}
@@ -2267,22 +2266,22 @@ async function saveConcept(){
 
 async function removeConcept(id){
   try{await post("/api/concepts/remove",{id});
-    toast("Concetto eliminato");await loadConceptsList();await loadSidebar();}
+    toast("Concept deleted");await loadConceptsList();await loadSidebar();}
   catch(e){toast("⚠ "+e.message);}
 }
 
 async function addSampleDoc(cid,pol,docId){
   try{await post("/api/concepts/add-doc",
       {id:cid,doc_id:docId||state.selId,polarity:pol});
-    toast("Documento aggiunto come esempio "+
-      (pol==="pos"?"positivo (A)":"negativo (B)"));
+    toast("Document added as "+
+      (pol==="pos"?"positive (A)":"negative (B)")+" sample");
     await loadSidebar();}
   catch(e){toast("⚠ "+e.message);}
 }
 
 function quickConcept(docId,title){
   window._qdoc=docId;
-  $("#qdoc").textContent="Documento: "+(title||docId);
+  $("#qdoc").textContent="Document: "+(title||docId);
   const sel=$("#qconcept");sel.innerHTML="";
   for(const cpt of (state.concepts||[]))
     sel.appendChild(new Option(cpt.name,cpt.id));
@@ -2290,7 +2289,7 @@ function quickConcept(docId,title){
 }
 function hideQ(){$("#qmodal").classList.remove("on");}
 async function quickAdd(pol){
-  if(!$("#qconcept").value){toast("Prima crea un concetto");return;}
+  if(!$("#qconcept").value){toast("Create a concept first");return;}
   await addSampleDoc($("#qconcept").value,pol,window._qdoc);
   hideQ();
   if(state.view==="concept")loadList();
@@ -2325,9 +2324,9 @@ async function scanWatch(){
     const strip=$("#scanstrip");
     if(st.running){
       const s=st.stats||{};
-      strip.innerHTML='<span class="dot"></span>Scansione in corso: '+
+      strip.innerHTML='<span class="dot"></span>Scan in progress: '+
         (s.radice||st.path||"")+' · visti '+(s.visti||0)+' · nuovi '+
-        (s.nuovi||0)+' · aggiornati '+(s.aggiornati||0);
+        (s.nuovi||0)+' · updated '+(s.aggiornati||0);
       strip.classList.add("on");
       wasScanning=true;
     }else{
@@ -2337,8 +2336,8 @@ async function scanWatch(){
         await loadSidebar();
         if(state.view==="list"&&!state.q)await loadList();
         const s=st.stats||{};
-        toast("✔ Scansione completata: "+(s.nuovi||0)+" nuovi, "+
-          (s.aggiornati||0)+" modificati");
+        toast("✔ Scan completed: "+(s.nuovi||0)+" new, "+
+          (s.aggiornati||0)+" updated");
       }
     }
   }catch(e){/* server occupato: riprova al prossimo giro */}

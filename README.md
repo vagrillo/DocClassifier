@@ -1,245 +1,245 @@
-**🌐 Italiano** · [🇬🇧 English](README.en.md)
+**🌐 English** · [🇮🇹 Italiano](README.it.md)
 
-# DocClassifier — gestore documentale personale in Python
+# DocClassifier — personal document manager in Python
 
-![Home di DocClassifier](docs/screenshot-home.png)
+![DocClassifier home](docs/screenshot-home.png)
 
-`DocClassifier` (pacchetto Python: `devon`) indicizza le tue cartelle di
-documenti in un database SQLite con ricerca full-text, tag, gruppi
-(anche "smart"), **categorie semantiche con ancoraggi positivi/negativi**,
-suggerimenti "vedi anche", rilevamento dei duplicati ed export verso un
-disco esterno.
+`DocClassifier` (Python package: `devon`) indexes your document folders
+into a SQLite database with full-text search, tags, groups (including
+"smart" ones), **semantic categories with positive/negative anchors**,
+"see also" suggestions, duplicate detection and export to an external
+drive.
 
-**Non modifica, sposta o cancella mai i file originali**: legge, indicizza
-e al massimo *copia* (con `export`).
+**It never modifies, moves or deletes your original files**: it reads,
+indexes and at most *copies* (with `export`).
 
-Funziona con la sola libreria standard di Python 3.10+ (testato fino a
-3.13), quindi gira senza installare nulla.
+It runs on the Python standard library alone (3.10+, tested up to 3.13),
+so it works with nothing to install.
 
-## Ricerca alla Google con parole chiave (vettoriale)
+## Google-like search with keywords (vector search)
 
-La ricerca principale è **vettoriale**: ogni termine contribuisce al
-vettore «da cercare» con segno e peso.
-
-```
-ricetta +#mamma +#carciofi -#pomodoro
-2*assicurazione
-```
-
-- `+termine` avvicina, `-termine` allontana, `peso*termine` lo pesa;
-- `#nome` espande una **parola chiave**: un vettore composto che definisci
-  tu, unendo frasi, altre parole chiave e documenti campione:
+The main search is **vector-based**: every term contributes to the
+"to-search" vector with sign and weight.
 
 ```
-mamma
-mama
-1.0*"madre"
-1.0*#famiglia
--0.5*"fratello"
-0.5*"D:\foto\mamma.jpg"     ← documento campione con valore
+recipe +#mum +#artichokes -#tomato
+2*insurance
 ```
 
-Un documento appartiene ai risultati se il suo blocco di contenuto è
-simile al vettore composto (i documenti lunghi sono spezzati in più
-blocchi: basta che ne sia vicino uno). Le corrispondenze lessicali
-esatte — fondamentali per i nomi propri — aggiungono un bonus con
-una gerarchia: parola presente → parole adiacenti → presenti nel nome
-del file.
+- `+term` pulls closer, `-term` pushes away, `weight*term` weighs it;
+- `#name` expands a **keyword**: a composed vector that you define by
+  combining phrases, other keywords and sample documents:
 
-Le **categorie pronte** (famiglia, salute, lavoro, finanza, casa,
-veicoli, viaggi, identità, scuola, hobby) si creano in un clic dal
-pannello «⚙ Parole chiave» e compaiono come tag cliccabili. Il **filtro
-formati** (.doc, .docx, .pdf…) si seleziona sotto la ricerca ed è
-memorizzato nel browser.
+```
+mum
+mom
+1.0*"mother"
+1.0*#family
+-0.5*"brother"
+0.5*"D:\photos\mum.jpg"     ← sample document with value
+```
 
-![Ricerca vettoriale](docs/screenshot-ricerca.png)
+A document belongs to the results if its content block is similar to
+the composed vector (long documents are split into several blocks: being
+close to any one of them is enough). Exact lexical matches — essential
+for rare proper names — add a bonus with a relevance hierarchy: word
+present → adjacent words → present in the file name.
 
-![Parole chiave e categorie pronte](docs/screenshot-categorie.png)
+**Ready-made categories** (family, health, work, finance, home,
+vehicles, travel, identity, school, hobby) are created with one click
+from the «⚙ Keywords» panel and appear as clickable tags. The **format
+filter** (.doc, .docx, .pdf…) is selected under the search box and
+remembered by your browser.
 
-## Eseguibili pronti (senza installare Python)
+![Vector search](docs/screenshot-ricerca.png)
 
-GitHub Actions compila automaticamente i binari autonomi per
-**Windows (x64)**, **macOS Intel** e **macOS Apple Silicon**: scheda
-*Actions* → workflow "Build" → esegui oppure scarica l'artefatto della
-tua piattaforma (spingendo un tag `v…` viene creata anche una Release).
+![Keywords and ready-made categories](docs/screenshot-categorie.png)
+
+## Ready-to-run executables (no Python needed)
+
+GitHub Actions automatically builds self-contained binaries for
+**Windows (x64)**, **macOS Intel** and **macOS Apple Silicon**:
+*Actions* tab → "Build" workflow → run it or download the artifact for
+your platform (pushing a `v…` tag also creates a Release).
 
 ```bash
-# avvio dell'interfaccia web (raggiungibile in rete locale)
-devon.exe --db D:\archivio\library.db serve --host 0.0.0.0 --port 8300
-./devon     --db ~/archivio/library.db serve --host 0.0.0.0 --port 8300
+# start the web UI (reachable on the local network)
+devon.exe --db D:\archive\library.db serve --host 0.0.0.0 --port 8300
+./devon     --db ~/archive/library.db serve --host 0.0.0.0 --port 8300
 ```
 
-Su macOS il binario non è firmato: al primo avvio usare tasto destro →
-"Apri", oppure `xattr -d com.apple.quarantine devon`.
+On macOS the binary is unsigned: on first launch right-click → "Open",
+or `xattr -d com.apple.quarantine devon`.
 
-## Installazione da sorgente
+## Install from source
 
 ```bash
-cd DocClassifier               # la cartella di questo progetto
-python3 -m devon init          # crea ~/.devon/library.db
+cd DocClassifier               # this project's folder
+python3 -m devon init          # creates ~/.devon/library.db
 ```
 
-Opzionale, per estrarre il testo dai PDF:
+Optional, to extract text from PDFs:
 
 ```bash
 pip3 install --user pypdf
 ```
 
-## Uso tipico
+## Typical usage
 
 ```bash
-# 1. indicizza le cartelle con i tuoi documenti
+# 1. index the folders with your documents
 python3 -m devon import ~/Documents ~/Desktop ~/Downloads
 
-# 2. cerca e esplora
-python3 -m devon search "consiglio amministrazione"
-python3 -m devon search "bilancio" kind:pdf
+# 2. search and explore
+python3 -m devon search "board meeting"
+python3 -m devon search "budget" kind:pdf
 python3 -m devon similar 42
 
-# 3. organizza con tag, gruppi e parole chiave
-python3 -m devon tag 42 +personale
-python3 -m devon group add Personale
-python3 -m devon group put Personale 42 43 44
-python3 -m devon group add "Consiglio Alfa" --query "alfa consiglio verbale"
+# 3. organize with tags, groups and keywords
+python3 -m devon tag 42 +personal
+python3 -m devon group add Personal
+python3 -m devon group put Personal 42 43 44
+python3 -m devon group add "Alfa Board" --query "alfa board minutes"
 
-# 4. duplicati ed export
+# 4. duplicates and export
 python3 -m devon dupes
-python3 -m devon export --tag personale --dest /Volumes/Backup/personale
+python3 -m devon export --tag personal --dest /Volumes/Backup/personal
 
-# interfaccia grafica web (apre il browser su http://127.0.0.1:8300)
+# web UI (opens the browser on http://127.0.0.1:8300)
 python3 -m devon serve
 ```
 
-## Le due interfacce
+## The two user interfaces
 
-- **`/` — ricerca Google-like** (quella consigliata): logo, casella di
-  ricerca, tag cliccabili, filtro formati con memoria nel browser,
-  indicatore di stato dell'indicizzazione in basso a sinistra
-  (documenti, embedding, scansione in corso). Da smartphone si adatta
-  da sola.
-- **`/classic` — interfaccia completa a tre pannelli**: barra laterale
-  (tipi, argomenti, concetti, gruppi, tag), ricerca live con snippet,
-  scheda documento con azioni (apri/scarica file, tag, gruppi, esempi
-  A/B per i concetti), pannello **Cartelle e indice** (sorgenti
-  permanenti, aggiornamento incrementale di file nuovi e modificati con
-  stato in tempo reale), **Analisi semantica** (embedding e clustering),
-  **Concetti** (classificatore A/B), vista Duplicati e statistiche.
+- **`/` — Google-like search** (the recommended one): logo, search box,
+  clickable tags, format filter remembered by the browser, indexing
+  status indicator at the bottom left (documents, embeddings, scan in
+  progress). Adapts to smartphones automatically.
+- **`/classic` — full three-pane interface**: sidebar (types, topics,
+  concepts, groups, tags), live search with highlighted snippets,
+  document card with actions (open/download file, tags, groups, A/B
+  samples for concepts), **Folders & index** panel (persistent sources,
+  incremental update of new and modified files with real-time status),
+  **Semantic analysis** (embeddings and clustering), **Concepts** (A/B
+  classifier), Duplicates view and statistics.
 
-Avvio: `python3 -m devon serve` (opzioni: `--port 8300 --host
+Start it with: `python3 -m devon serve` (options: `--port 8300 --host
 127.0.0.1 --no-browser`).
 
-## Ricerca semantica e classificazione automatica
+## Semantic search and automatic classification
 
-- **Embedding a blocchi** — i documenti con testo vengono spezzati in
-  passaggi da ~1000 caratteri e TUTTO il contenuto viene vettorizzato
-  (modello multilingue locale via `fastembed`, numpy per i calcoli);
-  un documento risulta affine se lo è una sua parte.
-- **Ricerca semantica** — casella «semantica» nella web gui classica o
-  comando `semsearch`: ordina per affinità di significato; i filtri
-  (`kind:`, `tag:`…) restano attivi.
-- **Concetti (classificatore A/B)** — ancoraggi positivi e negativi
-  (frasi, documenti campione per percorso, tipi file) con punteggio
-  `sim(XX,A) − sim(XX,B)`; combinabili con `@Nome`. Filtro per tipi
-  facoltativo («solo questi tipi»).
-- **Argomenti (clustering)** — k-means per contenuti con etichetta
-  automatica, filtrabile con `topic:"etichetta"`.
-- **Categorie semantiche** — gruppi smart con query `sem:...` (unione
-  di corrispondenze lessicali e semantiche).
+- **Chunked embeddings** — documents with text are split into
+  ~1000-character passages and ALL of the content is vectorized (local
+  multilingual model via `fastembed`, numpy for the math); a document
+  matches if any of its parts does.
+- **Semantic search** — the «semantic» checkbox in the classic web UI
+  or the `semsearch` command: ranks by meaning similarity; filters
+  (`kind:`, `tag:`…) still apply.
+- **Concepts (A/B classifier)** — positive and negative anchors
+  (phrases, sample documents by path, file types) scored as
+  `sim(XX,A) − sim(XX,B)`; combinable with `@Name`. Optional strict
+  file-type filter.
+- **Topics (clustering)** — k-means over the vectors assigns each
+  document an automatically-labelled topic, filterable with
+  `topic:"label"`.
+- **Semantic categories** — smart groups with `sem:...` queries
+  (combining exact lexical and above-threshold semantic matches).
 
-Comandi: `semsearch QUERY` · `embed` · `cluster [-k N] [--all-kinds]` ·
+Commands: `semsearch QUERY` · `embed` · `cluster [-k N] [--all-kinds]` ·
 `topics` · `similar ID` · `classify [ID] [--all] [--apply]`
 
-## Sintassi di ricerca (interfaccia classica)
+## Search syntax (classic interface)
 
-| Esempio                      | Effetto                                    |
+| Example                      | Effect                                     |
 |------------------------------|--------------------------------------------|
-| `verbale assemblea`          | documenti con entrambe le parole           |
-| `consigl*`                   | prefisso (consiglio, consigliere…)         |
-| `-bozza`                     | esclude i documenti con "bozza"            |
-| `tag:personale`              | solo documenti con quel tag                |
-| `kind:pdf` `kind:email`      | filtro per tipo                            |
-| `ext:.docx`                  | filtro per estensione                      |
-| `path:consigli`              | filtro sul percorso                        |
-| `group:personale`            | dentro un gruppo                           |
-| `topic:"07 · verbale"`       | dentro un argomento automatico             |
+| `board meeting`              | documents containing both words            |
+| `board*`                     | prefix (boarding, boards…)                 |
+| `-draft`                     | excludes documents containing "draft"      |
+| `tag:personal`               | only documents with that tag               |
+| `kind:pdf` `kind:email`      | filter by type                             |
+| `ext:.docx`                  | filter by extension                        |
+| `path:board`                 | filter on the file path                    |
+| `group:personal`             | inside a group                             |
+| `topic:"07 · minutes"`       | inside an automatic topic                  |
 
-Gli accenti non sono un problema: `perché` trova anche `perche`.
+Accents are not an issue: `perché` also finds `perche`.
 
-## Comandi
+## Commands
 
 ```
-init            crea/apre il database
-import PATH…    indicizza cartelle o file (incrementale: rileva nuovi e modificati)
-ls              elenca documenti (--kind --tag --group --json)
-search QUERY    ricerca full-text con snippet evidenziato
-show ID         dettagli, testo, tag, gruppi, vedi-anche
-rm ID…          toglie dall'INDICE (i file restano al loro posto)
-tag ID +t -t    aggiunge/rimuove tag
-tags            elenca i tag in uso
-group add|ls|rm|put   gruppi normali e smart (--query "sem:…")
-similar ID      documenti affini (embedding o TF-IDF)
-semsearch QUERY ricerca semantica
-embed           calcola gli embedding (incrementale)
-cluster [-k N]  raggruppa per contenuti in argomenti
-topics          elenca gli argomenti
-classify [ID]   suggerisce/assegna i gruppi per contenuto
-dupes           gruppi di duplicati (stesso contenuto, SHA-256)
-stats           statistiche dell'archivio
-check           file indicizzati ma non più presenti su disco
-export          copia documenti (per query, tag, gruppo o ID) in una cartella
-serve           web gui (default porta 8300, apre il browser)
+init            creates/opens the database
+import PATH…    indexes folders or files (incremental: detects new and modified)
+ls              lists documents (--kind --tag --group --json)
+search QUERY    full-text search with highlighted snippet
+show ID         details, text, tags, groups, see-also
+rm ID…          removes from the INDEX (files stay untouched)
+tag ID +t -t    adds/removes tags
+tags            lists tags in use
+group add|ls|rm|put   plain and smart groups (--query "sem:…")
+similar ID      similar documents (embeddings or TF-IDF)
+semsearch QUERY semantic search
+embed           computes embeddings (incremental)
+cluster [-k N]  groups documents into topics by content
+topics          lists the topics
+classify [ID]   suggests/assigns groups by content
+dupes           duplicate groups (same content, SHA-256)
+stats           archive statistics
+check           indexed files no longer on disk
+export          copies documents (by query, tag, group or ID) to a folder
+serve           web UI (default port 8300, opens the browser)
 ```
 
-Opzione globale `--db PERCORSO` (o variabile d'ambiente `DEVON_DB`).
+Global option `--db PATH` (or the `DEVON_DB` environment variable).
 
-## Formati supportati
+## Supported file formats
 
-- **Testo diretto**: txt, md, csv, json, xml, html, rtf, codice sorgente
-- **Office (zip/XML)**: docx, xlsx, pptx, odt, ods, odp, epub — senza
-  dipendenze esterne
-- **Office storici binari**: doc, xls, ppt — estrazione euristica del
-  testo (cp1252 e UTF-16) direttamente dai byte
-- **Email**: .eml / .emlx (intestazioni + corpo)
-- **PDF**: testo con `pypdf` (opzionale); OCR con `pytesseract` +
-  Tesseract (opzionale) per le scansioni
-- **Immagini**: OCR opzionale come sopra
-- **Tutti gli altri formati**: indicizzati con metadati (nome, percorso,
-  data, hash) e ricercabili per nome
+- **Direct text**: txt, md, csv, json, xml, html, rtf, source code
+- **Office (zip/XML)**: docx, xlsx, pptx, odt, ods, odp, epub — with no
+  external dependencies
+- **Legacy binary Office**: doc, xls, ppt — heuristic text extraction
+  (cp1252 and UTF-16) straight from the bytes
+- **Email**: .eml / .emlx (headers + body)
+- **PDF**: text via `pypdf` (optional); OCR via `pytesseract` +
+  Tesseract (optional) for scans
+- **Images**: optional OCR as above
+- **All other formats**: indexed with metadata (name, path, date, hash)
+  and searchable by name
 
 ## Windows
 
-Due launcher pronti: `avvia-devon-web.bat` (web gui su 0.0.0.0:8300 con
-database in `D:\devon\library.db`) e `importa-C-D.bat` (indicizza C:\ e
-D:\ saltando le aree di sistema). Per l'accesso da altri PC della LAN:
+Two ready-made launchers: `avvia-devon-web.bat` (web UI on 0.0.0.0:8300
+with the database in `D:\devon\library.db`) and `importa-C-D.bat`
+(indexes C:\ and D:\ skipping system areas). For access from other LAN
+computers:
 
 ```bat
 netsh advfirewall firewall add rule name="devon web 8300" dir=in action=allow protocol=TCP localport=8300
 ```
 
-(da terminale **come amministratore**, una volta sola)
+(from an **administrator** terminal, once)
 
-## Dove stanno i miei dati?
+## Where is my data?
 
-Tutto in un unico file SQLite (`~/.devon/library.db`, oppure il percorso
-`--db`/`DEVON_DB`): backup = copia del file; ripartenza da zero =
-cancellazione; indice sempre ricostruibile rilanciando `import`.
+Everything lives in a single SQLite file (`~/.devon/library.db`, or the
+`--db`/`DEVON_DB` path): backup = copy the file; fresh start = delete
+it; the index can always be rebuilt by re-running `import`.
 
-## Struttura del progetto
+## Project structure
 
 ```
 devon/
-├── db.py        schema SQLite (documenti, FTS5, tag, gruppi,
-│                parole chiave, concetti, embedding) + migrazioni
-├── extract.py   estrazione testo per formato (Office, PDF, email…)
-├── ingest.py    scansione ricorsiva, hash SHA-256, sorgenti
-├── search.py    parser query + ricerca FTS5 con snippet
-├── semantic.py  embedding a blocchi, ricerca vettoriale, clustering,
-│                concetti A/B
-├── similar.py   vedi-anche (TF-IDF / embedding)
-├── cli.py       interfaccia a riga di comando
-└── webapp.py    web gui (API JSON + due interfacce, stdlib only)
+├── db.py        SQLite schema (documents, FTS5, tags, groups,
+│                keywords, concepts, embeddings) + migrations
+├── extract.py   per-format text extraction (Office, PDF, email…)
+├── ingest.py    recursive scan, SHA-256 hash, sources
+├── search.py    query parser + FTS5 search with snippets
+├── semantic.py  chunked embeddings, vector search, clustering,
+│                A/B concepts
+├── similar.py   see-also (TF-IDF / embeddings)
+├── cli.py       command line interface
+└── webapp.py    web UI (JSON API + two front-ends, stdlib only)
 ```
 
 ---
 
-**🌐 Italiano** · [🇬🇧 English](README.en.md)
+**🌐 English** · [🇮🇹 Italiano](README.it.md)
