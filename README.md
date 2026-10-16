@@ -1,33 +1,60 @@
+**🌐 Italiano** · [🇬🇧 English](README.en.md)
+
 # DocClassifier — gestore documentale personale in Python
 
 ![Home di DocClassifier](docs/screenshot-home.png)
 
-`DocClassifier` (pacchetto Python: `devon`) indicizza le tue cartelle di documenti in un database
-SQLite con ricerca full-text, tag, gruppi (anche "smart"), **categorie
-semantiche con ancoraggi positivi/negativi**, suggerimenti "vedi anche",
-rilevamento dei duplicati ed export verso un disco esterno.
-
-## Ricerca alla Google con parole chiave
-
-La ricerca è **vettoriale**: ogni termine contribuisce al vettore da
-cercare, con segno e peso — `ricetta +#mamma +#carciofi -#pomodoro`
-trova i documenti vicini a quella somma. Le **parole chiave** (es.
-`#mamma`) sono insiemi di parole/frasi, riferimenti ad altre parole
-chiave e documenti campione pesati: si definiscono in un clic dal
-catalogo di **categorie pronte** (famiglia, salute, lavoro, finanza,
-casa, veicoli, viaggi, identità, scuola, hobby) e compaiono come tag
-cliccabili. I formati da cercare si scelgono con i filtri sotto la
-ricerca (memorizzati nel browser).
-
-![Ricerca vettoriale](docs/screenshot-ricerca.png)
-
-![Parole chiave e categorie pronte](docs/screenshot-categorie.png)
+`DocClassifier` (pacchetto Python: `devon`) indicizza le tue cartelle di
+documenti in un database SQLite con ricerca full-text, tag, gruppi
+(anche "smart"), **categorie semantiche con ancoraggi positivi/negativi**,
+suggerimenti "vedi anche", rilevamento dei duplicati ed export verso un
+disco esterno.
 
 **Non modifica, sposta o cancella mai i file originali**: legge, indicizza
 e al massimo *copia* (con `export`).
 
 Funziona con la sola libreria standard di Python 3.10+ (testato fino a
-3.12), quindi gira senza installare nulla.
+3.13), quindi gira senza installare nulla.
+
+## Ricerca alla Google con parole chiave (vettoriale)
+
+La ricerca principale è **vettoriale**: ogni termine contribuisce al
+vettore «da cercare» con segno e peso.
+
+```
+ricetta +#mamma +#carciofi -#pomodoro
+2*assicurazione
+```
+
+- `+termine` avvicina, `-termine` allontana, `peso*termine` lo pesa;
+- `#nome` espande una **parola chiave**: un vettore composto che definisci
+  tu, unendo frasi, altre parole chiave e documenti campione:
+
+```
+mamma
+mama
+1.0*"madre"
+1.0*#famiglia
+-0.5*"fratello"
+0.5*"D:\foto\mamma.jpg"     ← documento campione con valore
+```
+
+Un documento appartiene ai risultati se il suo blocco di contenuto è
+simile al vettore composto (i documenti lunghi sono spezzati in più
+blocchi: basta che ne sia vicino uno). Le corrispondenze lessicali
+esatte — fondamentali per i nomi propri — aggiungono un bonus con
+una gerarchia: parola presente → parole adiacenti → presenti nel nome
+del file.
+
+Le **categorie pronte** (famiglia, salute, lavoro, finanza, casa,
+veicoli, viaggi, identità, scuola, hobby) si creano in un clic dal
+pannello «⚙ Parole chiave» e compaiono come tag cliccabili. Il **filtro
+formati** (.doc, .docx, .pdf…) si seleziona sotto la ricerca ed è
+memorizzato nel browser.
+
+![Ricerca vettoriale](docs/screenshot-ricerca.png)
+
+![Parole chiave e categorie pronte](docs/screenshot-categorie.png)
 
 ## Eseguibili pronti (senza installare Python)
 
@@ -45,14 +72,11 @@ devon.exe --db D:\archivio\library.db serve --host 0.0.0.0 --port 8300
 Su macOS il binario non è firmato: al primo avvio usare tasto destro →
 "Apri", oppure `xattr -d com.apple.quarantine devon`.
 
----
-
-## Installazione su macOS
+## Installazione da sorgente
 
 ```bash
-# Python 3 (se assente):  xcode-select --install   (oppure python.org)
-cd devon                      # la cartella di questo progetto
-python3 -m devon init         # crea ~/.devon/library.db
+cd DocClassifier               # la cartella di questo progetto
+python3 -m devon init          # crea ~/.devon/library.db
 ```
 
 Opzionale, per estrarre il testo dai PDF:
@@ -61,99 +85,71 @@ Opzionale, per estrarre il testo dai PDF:
 pip3 install --user pypdf
 ```
 
-Verifica rapida del prerequisito full-text:
-
-```bash
-python3 -c "import sqlite3; sqlite3.connect(':memory:').execute(
-  \"CREATE VIRTUAL TABLE t USING fts5(x)\"); print('FTS5 ok')"
-```
-
 ## Uso tipico
 
 ```bash
 # 1. indicizza le cartelle con i tuoi documenti
 python3 -m devon import ~/Documents ~/Desktop ~/Downloads
 
-# 2. trova i tuoi file e verificane il contenuto con snippet e "vedi anche"
+# 2. cerca e esplora
 python3 -m devon search "consiglio amministrazione"
 python3 -m devon search "bilancio" kind:pdf
 python3 -m devon similar 42
-python3 -m devon show 42
 
-# 3. organizza con tag e gruppi
-python3 -m devon tag 42 +personale +consiglio-alfa-srl
+# 3. organizza con tag, gruppi e parole chiave
+python3 -m devon tag 42 +personale
 python3 -m devon group add Personale
 python3 -m devon group put Personale 42 43 44
 python3 -m devon group add "Consiglio Alfa" --query "alfa consiglio verbale"
 
-# 4. duplicati: trova le copie ridondanti
+# 4. duplicati ed export
 python3 -m devon dupes
-
-# 5. esporta su disco esterno quello che ti serve
 python3 -m devon export --tag personale --dest /Volumes/Backup/personale
-python3 -m devon export --group "Consiglio Alfa" --dest /Volumes/Backup/alfa
 
 # interfaccia grafica web (apre il browser su http://127.0.0.1:8300)
 python3 -m devon serve
 ```
 
+## Le due interfacce
+
+- **`/` — ricerca Google-like** (quella consigliata): logo, casella di
+  ricerca, tag cliccabili, filtro formati con memoria nel browser,
+  indicatore di stato dell'indicizzazione in basso a sinistra
+  (documenti, embedding, scansione in corso). Da smartphone si adatta
+  da sola.
+- **`/classic` — interfaccia completa a tre pannelli**: barra laterale
+  (tipi, argomenti, concetti, gruppi, tag), ricerca live con snippet,
+  scheda documento con azioni (apri/scarica file, tag, gruppi, esempi
+  A/B per i concetti), pannello **Cartelle e indice** (sorgenti
+  permanenti, aggiornamento incrementale di file nuovi e modificati con
+  stato in tempo reale), **Analisi semantica** (embedding e clustering),
+  **Concetti** (classificatore A/B), vista Duplicati e statistiche.
+
+Avvio: `python3 -m devon serve` (opzioni: `--port 8300 --host
+127.0.0.1 --no-browser`).
+
 ## Ricerca semantica e classificazione automatica
 
-devon sa anche cercare e organizzare **per significato**, non solo per
-parola. Tutto il calcolo avviene in locale.
-
-- **Ricerca semantica** — casella «semantica» nella web gui o comando
-  `semsearch`: ordina i documenti per affinità di significato con la
-  query. Con gli embedding neurali «rendiconto finanziario» trova anche
-  «bilancio d'esercizio»; senza, un rango a similarità vettoriale
-  TF-IDF fa da fallback. I filtri (kind:, tag:, path:…) restano attivi
-  anche in modalità semantica.
-- **Embedding a blocchi** — i tipi documento (PDF, Office, email,
-  pagine web…) vengono spezzati in passaggi da ~1000 caratteri e
-  TUTTO il contenuto viene vettorizzato: un documento risulta affine
-  se lo è una sua parte (max per documento). Gli altri file hanno un
-  vettore solo sull'inizio, e i file col solo nome non entrano nel
-  rango semantico (restano trovabili per nome).
-- **Categorie semantiche** — gruppi smart con query `sem:...`
-  (es. `group add Honda --query "sem:honda moto"`): i membri uniscono
-  le corrispondenze lessicali esatte e quelle semantiche sopra soglia
-  (0.5). Nella web gui compaiono come gli altri gruppi ⚡.
-- **Argomenti (clustering)** — «Analisi semantica → Raggruppa»: k-means
-  sui vettori assegna a ogni documento un argomento con etichetta
+- **Embedding a blocchi** — i documenti con testo vengono spezzati in
+  passaggi da ~1000 caratteri e TUTTO il contenuto viene vettorizzato
+  (modello multilingue locale via `fastembed`, numpy per i calcoli);
+  un documento risulta affine se lo è una sua parte.
+- **Ricerca semantica** — casella «semantica» nella web gui classica o
+  comando `semsearch`: ordina per affinità di significato; i filtri
+  (`kind:`, `tag:`…) restano attivi.
+- **Concetti (classificatore A/B)** — ancoraggi positivi e negativi
+  (frasi, documenti campione per percorso, tipi file) con punteggio
+  `sim(XX,A) − sim(XX,B)`; combinabili con `@Nome`. Filtro per tipi
+  facoltativo («solo questi tipi»).
+- **Argomenti (clustering)** — k-means per contenuti con etichetta
   automatica, filtrabile con `topic:"etichetta"`.
-- **Documenti simili** — nella scheda di ogni documento, gli affini
-  per significato (max sui blocchi); da CLI `classify` suggerisce/assegna
-  i gruppi per contenuto.
+- **Categorie semantiche** — gruppi smart con query `sem:...` (unione
+  di corrispondenze lessicali e semantiche).
 
-Comandi: `semsearch QUERY` · `embed` · `cluster [-k N]` · `topics` ·
-`similar ID` · `classify [ID] [--all] [--apply]`
+Comandi: `semsearch QUERY` · `embed` · `cluster [-k N] [--all-kinds]` ·
+`topics` · `similar ID` · `classify [ID] [--all] [--apply]`
 
-## Interfaccia grafica web
-
-`python3 -m devon serve` apre nel browser un'interfaccia a tre pannelli
-a tre pannelli, senza alcuna dipendenza (HTML+CSS+JS inclusi
-nell'applicazione):
-
-- **Barra laterale**: tutti i documenti, filtro per tipo, gruppi
-  (normali e ⚡ smart, cliccabili), tag con conteggi, vista Duplicati
-- **Ricerca live** mentre digiti, con snippet evidenziato e chip dei tag
-- **Scheda documento**: metadati, testo, "vedi anche"; pulsanti per
-  **aprire il file originale** nel browser, scaricarlo, aggiungere o
-  rimuovere tag e gruppi (anche creandone di nuovi al volo) e rimuovere
-  il documento dall'indice
-- **Cartelle e indice**: gestione permanente delle sorgenti — percorsi
-  da indicizzare con numero di documenti e data dell'ultima scansione,
-  aggiunta/rimozione, e «Aggiorna» (singola cartella o tutte) che
-  rileva file **nuovi e modificati** in modo incrementale, con stato
-  dell'indicizzazione in tempo reale (visti/nuovi/aggiornati/duplicati)
-
-Opzioni: `--port 8300 --host 127.0.0.1 --no-browser`.
-
-L'interfaccia è responsive: da smartphone (stesso indirizzo in rete
-locale) la barra laterale diventa un menu a tendina con l'icona ☰ e le
-schede documento si aprono a pieno schermo.
-
-## Sintassi di ricerca
+## Sintassi di ricerca (interfaccia classica)
 
 | Esempio                      | Effetto                                    |
 |------------------------------|--------------------------------------------|
@@ -164,93 +160,86 @@ schede documento si aprono a pieno schermo.
 | `kind:pdf` `kind:email`      | filtro per tipo                            |
 | `ext:.docx`                  | filtro per estensione                      |
 | `path:consigli`              | filtro sul percorso                        |
-| `group:personale`            | dentro un gruppo (incluse le sottocartelle)|
+| `group:personale`            | dentro un gruppo                           |
+| `topic:"07 · verbale"`       | dentro un argomento automatico             |
 
-Gli accenti non sono un problema: `perché` trova anche `perche` e viceversa.
+Gli accenti non sono un problema: `perché` trova anche `perche`.
 
 ## Comandi
 
 ```
 init            crea/apre il database
-import PATH…    indicizza cartelle o file (ricalcolo incrementale)
+import PATH…    indicizza cartelle o file (incrementale: rileva nuovi e modificati)
 ls              elenca documenti (--kind --tag --group --json)
 search QUERY    ricerca full-text con snippet evidenziato
 show ID         dettagli, testo, tag, gruppi, vedi-anche
 rm ID…          toglie dall'INDICE (i file restano al loro posto)
 tag ID +t -t    aggiunge/rimuove tag
 tags            elenca i tag in uso
-group add|ls|rm|put   gruppi normali e smart (--query)
-similar ID      documenti affini (TF-IDF, similarità del coseno)
+group add|ls|rm|put   gruppi normali e smart (--query "sem:…")
+similar ID      documenti affini (embedding o TF-IDF)
+semsearch QUERY ricerca semantica
+embed           calcola gli embedding (incrementale)
+cluster [-k N]  raggruppa per contenuti in argomenti
+topics          elenca gli argomenti
+classify [ID]   suggerisce/assegna i gruppi per contenuto
 dupes           gruppi di duplicati (stesso contenuto, SHA-256)
 stats           statistiche dell'archivio
 check           file indicizzati ma non più presenti su disco
 export          copia documenti (per query, tag, gruppo o ID) in una cartella
-serve           interfaccia grafica web (default porta 8300, apre il browser)
+serve           web gui (default porta 8300, apre il browser)
 ```
 
-Opzione globale `--db PERCORSO` (o variabile d'ambiente `DEVON_DB`) per
-usare un database diverso da `~/.devon/library.db`.
+Opzione globale `--db PERCORSO` (o variabile d'ambiente `DEVON_DB`).
 
 ## Formati supportati
 
 - **Testo diretto**: txt, md, csv, json, xml, html, rtf, codice sorgente
-- **Office (zip/XML)**: docx, **xlsx**, **pptx**, odt, ods, odp, epub —
-  senza dipendenze esterne (fogli: stringhe e valori delle celle;
-  presentazioni: testo delle slide in ordine)
-- **Office storici binari**: **doc, xls, ppt** — estrazione euristica
-  delle sequenze di testo (cp1252 e UTF-16) direttamente dai byte:
-  i file diventano plenamente ricercabili senza librerie esterne
+- **Office (zip/XML)**: docx, xlsx, pptx, odt, ods, odp, epub — senza
+  dipendenze esterne
+- **Office storici binari**: doc, xls, ppt — estrazione euristica del
+  testo (cp1252 e UTF-16) direttamente dai byte
 - **Email**: .eml / .emlx (intestazioni + corpo)
-- **PDF**: testo con `pypdf` (opzionale); se il PDF è una scansione,
-  OCR con `pytesseract` + Tesseract (opzionale)
+- **PDF**: testo con `pypdf` (opzionale); OCR con `pytesseract` +
+  Tesseract (opzionale) per le scansioni
 - **Immagini**: OCR opzionale come sopra
 - **Tutti gli altri formati**: indicizzati con metadati (nome, percorso,
-  data, hash) e ricercabili per filename
+  data, hash) e ricercabili per nome
 
 ## Windows
 
-Il codice è identico: serve solo Python 3 per Windows (python.org).
-Due launcher pronti nella cartella del progetto:
-
-- `avvia-devon-web.bat` — avvia la web gui su **0.0.0.0:8300**
-  (raggiungibile dagli altri PC della rete locale) con database in
-  `D:\devon\library.db`
-- `importa-C-D.bat` — indicizza **C:\ e D:\** in sequenza (le aree di
-  sistema — Windows, Program Files, AppData, cestino — vengono saltate
-  automaticamente)
-
-Da riga di comando, l'equivalente manuale:
-
-```bat
-set DEVON_DB=D:\devon\library.db
-cd /d C:\AI\src\devon
-python -m devon serve --host 0.0.0.0 --port 8300
-python -m devon import C:\ D:\
-```
-
-Per l'accesso da altri PC della LAN, se il firewall lo blocca, aprire
-una volta sola un terminale **come amministratore**:
+Due launcher pronti: `avvia-devon-web.bat` (web gui su 0.0.0.0:8300 con
+database in `D:\devon\library.db`) e `importa-C-D.bat` (indicizza C:\ e
+D:\ saltando le aree di sistema). Per l'accesso da altri PC della LAN:
 
 ```bat
 netsh advfirewall firewall add rule name="devon web 8300" dir=in action=allow protocol=TCP localport=8300
 ```
 
+(da terminale **come amministratore**, una volta sola)
+
 ## Dove stanno i miei dati?
 
-Tutto in `~/.devon/library.db` (SQLite + indice FTS5). Per fare un backup
-dell'archivio basta copiare quel file. Per ripartire da zero basta
-cancellarlo. L'indice è ricostruibile in ogni momento rilanciando
-`import` sulle stesse cartelle.
+Tutto in un unico file SQLite (`~/.devon/library.db`, oppure il percorso
+`--db`/`DEVON_DB`): backup = copia del file; ripartenza da zero =
+cancellazione; indice sempre ricostruibile rilanciando `import`.
 
 ## Struttura del progetto
 
 ```
 devon/
-├── db.py        schema SQLite (documenti, FTS5, tag, gruppi) + trigger
-├── extract.py   estrazione testo per formato
-├── ingest.py    scansione ricorsiva, hash SHA-256, duplicati
+├── db.py        schema SQLite (documenti, FTS5, tag, gruppi,
+│                parole chiave, concetti, embedding) + migrazioni
+├── extract.py   estrazione testo per formato (Office, PDF, email…)
+├── ingest.py    scansione ricorsiva, hash SHA-256, sorgenti
 ├── search.py    parser query + ricerca FTS5 con snippet
-├── similar.py   vedi-anche (TF-IDF, similarità del coseno)
+├── semantic.py  embedding a blocchi, ricerca vettoriale, clustering,
+│                concetti A/B
+├── similar.py   vedi-anche (TF-IDF / embedding)
 ├── cli.py       interfaccia a riga di comando
-└── webapp.py    interfaccia grafica web (API JSON + app, stdlib only)
+└── webapp.py    web gui (API JSON + due interfacce, stdlib only)
 ```
+
+---
+
+**🌐 Italiano** · [🇬🇧 English](README.en.md)
