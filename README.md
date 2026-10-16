@@ -1,9 +1,27 @@
 # DocClassifier — gestore documentale personale in Python
 
+![Home di DocClassifier](docs/screenshot-home.png)
+
 `DocClassifier` (pacchetto Python: `devon`) indicizza le tue cartelle di documenti in un database
 SQLite con ricerca full-text, tag, gruppi (anche "smart"), **categorie
 semantiche con ancoraggi positivi/negativi**, suggerimenti "vedi anche",
 rilevamento dei duplicati ed export verso un disco esterno.
+
+## Ricerca alla Google con parole chiave
+
+La ricerca è **vettoriale**: ogni termine contribuisce al vettore da
+cercare, con segno e peso — `ricetta +#mamma +#carciofi -#pomodoro`
+trova i documenti vicini a quella somma. Le **parole chiave** (es.
+`#mamma`) sono insiemi di parole/frasi, riferimenti ad altre parole
+chiave e documenti campione pesati: si definiscono in un clic dal
+catalogo di **categorie pronte** (famiglia, salute, lavoro, finanza,
+casa, veicoli, viaggi, identità, scuola, hobby) e compaiono come tag
+cliccabili. I formati da cercare si scelgono con i filtri sotto la
+ricerca (memorizzati nel browser).
+
+![Ricerca vettoriale](docs/screenshot-ricerca.png)
+
+![Parole chiave e categorie pronte](docs/screenshot-categorie.png)
 
 **Non modifica, sposta o cancella mai i file originali**: legge, indicizza
 e al massimo *copia* (con `export`).
